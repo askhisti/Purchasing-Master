@@ -1,16 +1,12 @@
 // Pure config validation for release-gas.mjs (unit-tested).
-export function resolveReleaseTarget(claspJsonText, releaseConfigText) {
+// R55: the release is push-only (no web app deployment), so only the script id is needed.
+export function resolveReleaseTarget(claspJsonText) {
   let scriptId = '';
-  let deploymentId = '';
   try { scriptId = String(JSON.parse(claspJsonText || '{}').scriptId || '').trim(); } catch { /* handled below */ }
-  try { deploymentId = String(JSON.parse(releaseConfigText || '{}').deploymentId || '').trim(); } catch { /* handled below */ }
   if (!scriptId) {
     throw new Error('Missing scriptId: create apps-script/MasterData/.clasp.json (clasp create/clone) with a non-empty "scriptId".');
   }
-  if (!deploymentId) {
-    throw new Error('Missing deploymentId: set "deploymentId" in scripts/release-config.json (create the web app deployment once in the Apps Script editor).');
-  }
-  return { scriptId, deploymentId };
+  return { scriptId };
 }
 
 // The description is passed through cmd.exe on Windows; refuse shell metacharacters.
@@ -21,4 +17,9 @@ export function checkDescription(desc) {
     throw new Error('Release description must not contain & | < > ^ % " or `.');
   }
   return d;
+}
+
+// '' when no description was given (no clasp version), else the checked description.
+export function optionalDescription(desc) {
+  return String(desc || '').trim() ? checkDescription(desc) : '';
 }

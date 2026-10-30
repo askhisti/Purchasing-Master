@@ -26,6 +26,10 @@ coverage/
 !.env.example
 !.env.*.example
 .clasprc.json
+# Downloaded Google service account keys (the key lives only in MASTERDATA_SA_KEY)
+*service-account*.json
+rfq-mecl-automation-project-*.json
+*-key.json
 
 # Temporary files
 tmp/
