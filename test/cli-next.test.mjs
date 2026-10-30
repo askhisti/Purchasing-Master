@@ -110,7 +110,15 @@ test('happy path across 2 feeds, base year from health', () => {
   assert.equal(st.baseYear, 2027);
   assert.equal(st.health.BASE_YEAR, '2027');
   assert.equal(st.health.REFRESHED_AT_SC_EMS_PART, '2027-01-01');
-  assert.equal(st.pages.length, 1); // pages are per feed
+  assert.equal(st.done.length, 2);
+  assert.deepEqual(st.done.map((d) => d.feed), ['fa', 'fb']);
+  assert.deepEqual(st.done[0].expected, { rowCount: 3, keyCount: 3 });
+  assert.deepEqual(st.done[0].pages, [
+    { captureSeq: 3, rows: 2, firstKey: 'k1', lastKey: 'k2' },
+    { captureSeq: 4, rows: 1, firstKey: 'k3', lastKey: 'k3' },
+  ]);
+  assert.deepEqual(st.done[1].expected, { rowCount: 1, keyCount: 1 });
+  assert.deepEqual(st.done[1].pages, [{ captureSeq: 6, rows: 1, firstKey: 'z', lastKey: 'z' }]);
 });
 
 test('truncated page at minimum size aborts instead of looping', () => {
@@ -203,4 +211,91 @@ test('unparseable response aborts as unrecognized', () => {
   const { out, runId } = start(root);
   cap(root, runId, sqlOf(out), 'not json');
   assert.equal(next({ root }), 'ABORT unrecognized connector result');
+});
+
+test('health.sql with trailing newline: pending has none, result accepted', () => {
+  const root = makeRoot();
+  writeFileSync(join(root, 'sql', 'health.sql'), 'SELECT 1 AS BASE_YEAR\n');
+  const { out, runId } = start(root);
+  assert.equal(sqlOf(out), 'SELECT 1 AS BASE_YEAR');
+  cap(root, runId, 'SELECT 1 AS BASE_YEAR', healthResp());
+  assert.match(next({ root }), /^RUN_SQL/);
+});
+
+test('whitespace-only SQL difference accepted, token difference rejected', () => {
+  const root = makeRoot();
+  writeFileSync(join(root, 'sql', 'health.sql'), 'SELECT 1\n  AS BASE_YEAR');
+  const { runId } = start(root);
+  cap(root, runId, 'SELECT   1 AS\nBASE_YEAR  ', healthResp());
+  assert.match(next({ root }), /^RUN_SQL/);
+  const root2 = makeRoot();
+  const s2 = start(root2);
+  cap(root2, s2.runId, 'SELECT 2 AS BASE_YEAR', healthResp());
+  assert.equal(next({ root: root2 }), 'ABORT expected result of the pending SQL');
+});
+
+test('non-numeric PROBLEM_COUNT aborts', () => {
+  const root = makeRoot();
+  const { out, runId } = start(root);
+  cap(root, runId, sqlOf(out), healthResp(2027, 'x'));
+  assert.equal(next({ root }), 'ABORT unrecognized connector result');
+});
+
+test('non-numeric numRows aborts', () => {
+  const root = makeRoot();
+  const { out, runId } = start(root);
+  cap(root, runId, sqlOf(out), healthResp());
+  let sql = sqlOf(next({ root }));
+  cap(root, runId, sql, countResp(1, 1));
+  sql = sqlOf(next({ root }));
+  cap(root, runId, sql, pageResp([['k1', 'a']], 'abc'));
+  assert.equal(next({ root }), 'ABORT unrecognized connector result');
+});
+
+test('page without ROW_KEY first column aborts', () => {
+  const root = makeRoot();
+  const { out, runId } = start(root);
+  cap(root, runId, sqlOf(out), healthResp());
+  let sql = sqlOf(next({ root }));
+  cap(root, runId, sql, countResp(1, 1));
+  sql = sqlOf(next({ root }));
+  cap(root, runId, sql, resultText(['V', 'ROW_KEY'], [['a', 'k1']]));
+  assert.equal(next({ root }), 'ABORT fa: first column is not ROW_KEY');
+});
+
+test('full last page followed by an empty page completes the feed', () => {
+  const root = makeRoot();
+  const { out, runId } = start(root);
+  cap(root, runId, sqlOf(out), healthResp());
+  let sql = sqlOf(next({ root }));
+  cap(root, runId, sql, countResp(2, 2));
+  sql = sqlOf(next({ root }));
+  cap(root, runId, sql, pageResp([['k1', 'a'], ['k2', 'b']]));
+  sql = sqlOf(next({ root }));
+  assert.match(sql, /ROW_KEY > 'k2'/);
+  cap(root, runId, sql, pageResp([]));
+  sql = sqlOf(next({ root }));
+  assert.match(sql, /FROM u WHERE/);
+  assert.equal(stateOf(root, runId).done[0].pages.length, 1);
+});
+
+test('feed with zero rows completes', () => {
+  const root = makeRoot();
+  const { out, runId } = start(root);
+  cap(root, runId, sqlOf(out), healthResp());
+  let sql = sqlOf(next({ root }));
+  cap(root, runId, sql, countResp(0, 0));
+  sql = sqlOf(next({ root }));
+  cap(root, runId, sql, pageResp([]));
+  sql = sqlOf(next({ root }));
+  assert.match(sql, /FROM u WHERE/);
+  assert.deepEqual(stateOf(root, runId).done[0].pages, []);
+});
+
+test('newest of several new captures wins', () => {
+  const root = makeRoot();
+  const { out, runId } = start(root);
+  cap(root, runId, 'stale other sql', healthResp());
+  cap(root, runId, sqlOf(out), healthResp());
+  assert.match(next({ root }), /^RUN_SQL/);
 });

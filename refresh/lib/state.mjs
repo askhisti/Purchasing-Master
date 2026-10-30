@@ -29,7 +29,7 @@ export function saveState(root, state) {
 export function newestCaptureAfter(root, runId, afterSeq) {
   const dir = path.join(runsDir(root), runId, 'captures');
   if (!fs.existsSync(dir)) return null;
-  const names = fs.readdirSync(dir).filter((n) => /^\d{4}\.json$/.test(n)).sort();
+  const names = fs.readdirSync(dir).filter((n) => /^\d{4,}\.json$/.test(n)).sort((a, b) => parseInt(a, 10) - parseInt(b, 10));
   if (!names.length) return null;
   const cap = JSON.parse(fs.readFileSync(path.join(dir, names[names.length - 1]), 'utf8'));
   return cap.seq > afterSeq ? cap : null;

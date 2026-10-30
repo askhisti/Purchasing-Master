@@ -8,16 +8,17 @@ import { berlinRunId, loadState, saveState, newestCaptureAfter, runsDir, current
 
 const MIN_LIMIT = 100;
 
+const normSql = (t) => String(t).replace(/\s+/g, ' ').trim();
 const runSql = (sql) => `RUN_SQL\n${sql}`;
 
 function feedSql(root, feed, baseYear) {
-  const text = fs.readFileSync(path.join(root, feed.sqlFile), 'utf8');
+  const text = fs.readFileSync(path.join(root, feed.sqlFile), 'utf8').trimEnd();
   return renderFeedSql(text, baseYear);
 }
 
 export function begin({ root, now = new Date() }) {
   const runId = berlinRunId(now);
-  const pendingSql = fs.readFileSync(path.join(root, 'sql', 'health.sql'), 'utf8');
+  const pendingSql = fs.readFileSync(path.join(root, 'sql', 'health.sql'), 'utf8').trimEnd();
   const state = {
     runId,
     startedAt: now.toISOString(),
@@ -29,6 +30,7 @@ export function begin({ root, now = new Date() }) {
     limit: null,
     expected: null,
     pages: [],
+    done: [],
     pendingSql,
     health: null,
     failure: null,
@@ -73,7 +75,7 @@ export function next({ root }) {
   if (!cap) return abort(root, state, 'expected result of the pending SQL');
   state.lastSeq = cap.seq;
   if (cap.shape === 'unrecognized') return abort(root, state, 'unrecognized connector result');
-  if (cap.sql !== state.pendingSql) return abort(root, state, 'expected result of the pending SQL');
+  if (normSql(cap.sql) !== normSql(state.pendingSql)) return abort(root, state, 'expected result of the pending SQL');
 
   let r;
   try {
@@ -88,7 +90,9 @@ export function next({ root }) {
     if (!r.rows[0]) return abort(root, state, 'unrecognized connector result');
     const health = Object.fromEntries(r.columns.map((c, i) => [c, r.rows[0][i]]));
     state.health = health;
-    if (Number(health.PROBLEM_COUNT) > 0) return abort(root, state, `platform health: ${health.PROBLEM_LIST}`);
+    const problems = Number(health.PROBLEM_COUNT);
+    if (!Number.isFinite(problems)) return abort(root, state, 'unrecognized connector result');
+    if (problems > 0) return abort(root, state, `platform health: ${health.PROBLEM_LIST}`);
     const baseYear = Number(health.BASE_YEAR);
     if (!Number.isInteger(baseYear)) return abort(root, state, 'unrecognized connector result');
     state.baseYear = baseYear;
@@ -116,6 +120,8 @@ export function next({ root }) {
   }
 
   // step page
+  if (r.columns[0] !== 'ROW_KEY') return abort(root, state, `${feed.feed}: first column is not ROW_KEY`);
+  if (!Number.isFinite(Number(r.numRows))) return abort(root, state, 'unrecognized connector result');
   const requested = state.limit;
   if (r.rows.length < r.numRows) {
     if (requested <= MIN_LIMIT) return abort(root, state, `${feed.feed}: page truncated at minimum size`);
@@ -141,6 +147,7 @@ export function next({ root }) {
     if (fetched !== state.expected.rowCount) {
       return abort(root, state, `${feed.feed}: expected ${state.expected.rowCount} rows, fetched ${fetched}`);
     }
+    state.done.push({ feed: feed.feed, expected: state.expected, pages: state.pages });
     if (state.feedIndex + 1 < manifest.feeds.length) {
       startFeed(root, state, manifest, state.feedIndex + 1);
       saveState(root, state);
@@ -165,5 +172,11 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     console.error(`usage: cli.mjs <${Object.keys(commands).join('|')}>`);
     process.exit(2);
   }
-  console.log(cmd(process.cwd()));
+  let out;
+  try {
+    out = cmd(process.cwd());
+  } catch (e) {
+    out = `ABORT ${e && e.message ? e.message : e}`;
+  }
+  console.log(out);
 }
