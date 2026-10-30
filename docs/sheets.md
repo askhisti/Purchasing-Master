@@ -6,7 +6,7 @@ Source of truth for headers is `sql/feeds.json`; SQL is in `sql/feeds/*.sql` (fi
 
 - `COMPONENT_CATALOG.SUPPLIER_PARTNUMBER` holds the `ME_EC_...` number (2,510 `ME_EC_` rows plus 247 `ME_MC_` rows; 2,757 rows, all keys distinct and non-null). `COMPONENT_ID` is the numeric id used by joins.
 - `PART_ID` in `KPI_COMPONENT_DEMAND_BY_YEAR` and `COMPONENT_DEMAND_FORECAST` is a mixed id space (`PART_KIND` = COMPONENT, BOUGHT_ITEM, SUB_ASSEMBLY); all joins to the catalog filter `PART_KIND = 'COMPONENT'` so ids cannot collide.
-- `PLATFORM_HEALTH.AREA` values: `BASELINE`, `JIRA_PROJECT`, `MECL_SNAPSHOT`, `SAP_ENTITY`, `TASK`. All rows were `IS_PROBLEM = false` at check time. The gate blocks on `IS_PROBLEM` rows with `AREA LIKE 'MECL%'` (i.e. `MECL_SNAPSHOT`) or whose `OBJECT_NAME` is one of the nine source views.
+- `PLATFORM_HEALTH.AREA` values: `BASELINE`, `JIRA_PROJECT`, `MECL_SNAPSHOT`, `SAP_ENTITY`, `TASK`. All rows were `IS_PROBLEM = false` at check time. The gate (R34) blocks on `IS_PROBLEM` rows with `AREA = 'MECL_SNAPSHOT'` or whose `OBJECT_NAME` is `TASK_REFRESH_PURCHASING`, `TASK_REFRESH_SUPPLY_CHAIN` or `TASK_REFRESH_PLATFORM_HEALTH`; feed view names never appear in `PLATFORM_HEALTH`, so they are not part of the gate.
 - `PRODUCT_CATALOG.PRODUCT_SAMPLE_PHASE` holds values such as `Series`, `C2-Sample`, `A1-Sample`; `START_OF_PRODUCTION` is a DATE (some NULL). Names match content.
 - `MULTISOURCE_PARTS.USABLE_MEMBERS` is a count (number), not a list.
 - Only `COMPONENT_WHERE_USED` and `SC_EMS_PART` carry `REFRESHED_AT`, so `health.sql` returns `REFRESHED_AT_SC_EMS_PART` and `REFRESHED_AT_COMPONENT_WHERE_USED` only.
