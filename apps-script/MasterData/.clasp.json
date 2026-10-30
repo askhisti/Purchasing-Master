@@ -1,0 +1,18 @@
+{
+  "scriptId": "1tvWWeoQrTm9s2yhORqkASkSaq9eixPfjRh6mNSqTryOJwoBurc2MEv95",
+  "rootDir": "",
+  "parentId": "1xHaiQKQJdw6FYSplP1XhJqdHGxwSqsw6CnxUZwj1s3A",
+  "scriptExtensions": [
+    ".ts",
+    ".js",
+    ".gs"
+  ],
+  "htmlExtensions": [
+    ".html"
+  ],
+  "jsonExtensions": [
+    ".json"
+  ],
+  "filePushOrder": ["Config.ts", "Core.ts", "Store.ts", "Sheets.ts", "Watchdog.ts", "WebApp.ts"],
+  "skipSubdirectories": false
+}
