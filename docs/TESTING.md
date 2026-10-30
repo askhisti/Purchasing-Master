@@ -25,11 +25,10 @@ Run once in the cloud environment `purchasing-master` with the prompt "Run the n
 - [ ] `_Refresh_Log` has a row `OK` per feed and `B1` = today.
 - [ ] The six tabs exist with headers exactly as in `docs/sheets.md`.
 - [ ] `Components` row ME_EC_0000001 Demand <Y> equals the Snowflake value queried directly.
-- [ ] A part number with a leading zero shows the zero.
 - [ ] `Raw snapshots/<today>/` has six CSVs with header and row counts matching the log.
 - [ ] Snowflake connector calls in the run are <= 45.
 - [ ] `getActiveSpreadsheet()` works inside `doPost` of the bound web app.
-- [ ] A part number with a leading zero (e.g. 0402) and `1E3` stay text.
+- [ ] A part number with a leading zero (e.g. 0402) shows the zero, and `1E3` stay text.
 - [ ] Tab order is correct after the swap (`moveActiveSheet` without UI).
 - [ ] A string starting with `=` is stored as text, not a formula.
 - [ ] Number columns show without a trailing dot.

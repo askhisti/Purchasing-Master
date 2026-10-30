@@ -1,13 +1,13 @@
 import fs from 'fs';
 import path from 'path';
 import { execSync } from 'child_process';
-import { resolveReleaseTarget } from './release-lib.mjs';
+import { resolveReleaseTarget, checkDescription } from './release-lib.mjs';
 
 const rootDir = process.cwd();
 const targetDir = path.join(rootDir, 'apps-script', 'MasterData');
-const claspExecutable = process.platform === 'win32'
+const claspExecutable = process.env.CLASP_PATH || (process.platform === 'win32'
   ? 'C:\\Users\\a.khisti\\AppData\\Roaming\\npm\\clasp.cmd'
-  : 'clasp';
+  : 'clasp');
 
 function readIfExists(file) {
   return fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : '';
@@ -23,15 +23,14 @@ function runClasp(args, cwd) {
 }
 
 function main() {
-  const description = process.argv.slice(2).join(' ').trim();
-  if (!description) {
-    throw new Error('Usage: npm run release -- "<description>"');
-  }
-  const { deploymentId } = resolveReleaseTarget(
+  const description = checkDescription(process.argv.slice(2).join(' '));
+  const { scriptId, deploymentId } = resolveReleaseTarget(
     readIfExists(path.join(targetDir, '.clasp.json')),
     readIfExists(path.join(rootDir, 'scripts', 'release-config.json'))
   );
 
+  console.log(`scriptId: ${scriptId}
+deploymentId: ${deploymentId}`);
   console.log('Running tests and validation...');
   execSync('npm test && npm run validate', { cwd: rootDir, stdio: 'inherit' });
 

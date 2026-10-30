@@ -12,3 +12,13 @@ export function resolveReleaseTarget(claspJsonText, releaseConfigText) {
   }
   return { scriptId, deploymentId };
 }
+
+// The description is passed through cmd.exe on Windows; refuse shell metacharacters.
+export function checkDescription(desc) {
+  const d = String(desc || '').trim();
+  if (!d) throw new Error('Usage: npm run release -- "<description>"');
+  if (/[&|<>^%"`]/.test(d)) {
+    throw new Error('Release description must not contain & | < > ^ % " or `.');
+  }
+  return d;
+}

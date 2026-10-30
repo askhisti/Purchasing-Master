@@ -13,14 +13,16 @@ Drive `node refresh/cli.mjs` and the Snowflake connector tool `mcp__claude_ai_Sn
 2. Loop on the CLI output:
    - Output starts with `RUN_SQL`: call `mcp__claude_ai_Snowflake_-_ME_Data__sql` with exactly the SQL that follows the first line. No edits, no added queries. Then run `node refresh/cli.mjs next`.
    - Output is `FETCHED`: run `node refresh/cli.mjs finish` and stop looping.
-   - Output starts with `ABORT <reason>`: run `node refresh/cli.mjs fail "<reason>"` and stop looping.
-3. Reply with the final CLI line (`DONE ...` or `FAILED ...`) as the report, nothing else.
+   - Output starts with `ABORT <reason>`: run `node refresh/cli.mjs fail '<reason>'` and stop looping. Pass the reason as ONE single-quoted shell argument. The reason can contain data-derived text (quotes, `$`, backticks), so replace each `'` in it with `'\''` (or drop quote characters). Example for reason `can't parse $x`: `node refresh/cli.mjs fail 'can'\''t parse $x'`.
+   - Any other output (a Node crash, usage error, empty output): run `node refresh/cli.mjs fail 'unexpected CLI output'` once and stop.
+   - Each CLI response triggers at most one action.
+3. After any `DONE ...` or `FAILED ...` line, reply with that line verbatim as the report and run NO further CLI command. Never re-run `begin`, `finish` or `fail`. In particular `FAILED commit status unknown — check _Refresh_Log` must not be retried: a retry could duplicate a run.
 
 ## Rules
 
 - Never read, summarise or re-type result rows. Do not open capture files, run files or tool-result files.
 - Run no other Snowflake query during the run (any other call breaks the pending-SQL check).
-- If the connector call itself errors, run `node refresh/cli.mjs fail "connector error: <message>"`.
-- If the connector tool is not available, run `node refresh/cli.mjs fail "Snowflake connector not available"`.
+- If the connector call itself errors, run `node refresh/cli.mjs fail 'connector error: <message>'` (single-quoted, quotes escaped as above).
+- If the connector tool is not available, run `node refresh/cli.mjs fail 'Snowflake connector not available'`.
 - Safety: the run must not edit repo files or commit anything. It only runs the CLI and the connector tool.
 - `finish` and `fail` need env `MASTERDATA_WEBAPP_URL` and `MASTERDATA_TOKEN` (set in the cloud environment).
