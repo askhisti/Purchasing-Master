@@ -20,14 +20,28 @@ try {
     if (runId) {
       const dir = join(base, 'runs', runId, 'captures');
       mkdirSync(dir, { recursive: true });
-      const seq = readdirSync(dir).filter((f) => /^\d{4}\.json$/.test(f)).length + 1;
-      const capture = {
-        seq,
-        capturedAt: new Date().toISOString(),
-        sql: input.tool_input && input.tool_input.sql,
-        response: responseText(input.tool_response),
-      };
-      writeFileSync(join(dir, String(seq).padStart(4, '0') + '.json'), JSON.stringify(capture, null, 2));
+      // Normal path: "response" is the extracted text and "shape" is absent.
+      // If no text can be extracted, keep the raw payload and mark shape "unrecognized".
+      const text = responseText(input.tool_response);
+      const unrecognized = text === '';
+      let seq = readdirSync(dir).filter((f) => /^\d{4}\.json$/.test(f)).length + 1;
+      for (;;) {
+        const capture = {
+          seq,
+          capturedAt: new Date().toISOString(),
+          sql: input.tool_input && input.tool_input.sql,
+          response: unrecognized ? JSON.stringify(input.tool_response) : text,
+          ...(unrecognized ? { shape: 'unrecognized' } : {}),
+        };
+        try {
+          // 'wx' fails if the file exists, so concurrent hooks never overwrite each other.
+          writeFileSync(join(dir, String(seq).padStart(4, '0') + '.json'), JSON.stringify(capture, null, 2), { flag: 'wx' });
+          break;
+        } catch (e) {
+          if (e.code !== 'EEXIST') throw e;
+          seq += 1;
+        }
+      }
     }
   }
 } catch {

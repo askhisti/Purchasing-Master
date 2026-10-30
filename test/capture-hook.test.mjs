@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -19,9 +19,9 @@ function tempRepo(runId) {
   return dir;
 }
 
-function runHook(stdin) {
+function runHook(stdin, cwd = tmpdir()) {
   // The process cwd is deliberately elsewhere: paths must resolve against input.cwd.
-  return spawnSync(process.execPath, [hook], { input: stdin, encoding: 'utf8', cwd: tmpdir() });
+  return spawnSync(process.execPath, [hook], { input: stdin, encoding: 'utf8', cwd });
 }
 
 test('writes a numbered capture with sql and verbatim response', () => {
@@ -61,7 +61,41 @@ test('does nothing when runs/CURRENT is absent', () => {
 test('malformed stdin exits 0 and writes nothing', () => {
   const dir = tempRepo('r1');
   for (const bad of ['', 'not json', '{"cwd":']) {
-    assert.equal(runHook(bad).status, 0);
+    // Process cwd is the repo with runs/CURRENT, so a wrongly-written capture would land in `dir`.
+    assert.equal(runHook(bad, dir).status, 0);
   }
   assert.deepEqual(readdirSync(join(dir, 'runs')), ['CURRENT']);
+  assert.deepEqual(readdirSync(dir), ['runs']);
+});
+
+test('concurrent hooks never overwrite each other', async () => {
+  const dir = tempRepo('r1');
+  const n = 8;
+  const runs = Array.from({ length: n }, (_, i) => new Promise((resolveRun) => {
+    const child = spawn(process.execPath, [hook], { cwd: tmpdir() });
+    child.on('close', (code) => resolveRun(code));
+    child.stdin.end(JSON.stringify({ ...input, cwd: dir, tool_response: `response-${i}` }));
+  }));
+  assert.deepEqual(await Promise.all(runs), Array(n).fill(0));
+  const capDir = join(dir, 'runs', 'r1', 'captures');
+  const files = readdirSync(capDir).sort();
+  assert.equal(files.length, n);
+  const responses = files.map((f) => JSON.parse(readFileSync(join(capDir, f), 'utf8')).response);
+  assert.equal(new Set(responses).size, n);
+});
+
+test('unrecognized tool_response is kept as JSON and flagged', () => {
+  const dir = tempRepo('r1');
+  const weird = { foo: 'bar', n: 1 };
+  assert.equal(runHook(JSON.stringify({ ...input, tool_response: weird, cwd: dir })).status, 0);
+  const cap = JSON.parse(readFileSync(join(dir, 'runs', 'r1', 'captures', '0001.json'), 'utf8'));
+  assert.equal(cap.shape, 'unrecognized');
+  assert.equal(cap.response, JSON.stringify(weird));
+});
+
+test('normal captures carry no shape flag', () => {
+  const dir = tempRepo('r1');
+  runHook(JSON.stringify({ ...input, cwd: dir }));
+  const cap = JSON.parse(readFileSync(join(dir, 'runs', 'r1', 'captures', '0001.json'), 'utf8'));
+  assert.equal('shape' in cap, false);
 });
