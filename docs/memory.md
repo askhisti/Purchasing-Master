@@ -7,11 +7,12 @@
 | MasterData sheet ID | (fill in) |
 | Apps Script script ID | (fill in; also in `apps-script/MasterData/.clasp.json`) |
 | Deployment ID | (fill in; also in `scripts/release-config.json`) |
-| Web app `/exec` URL | (fill in; set as `MASTERDATA_WEBAPP_URL` in the cloud environment) |
+| Drive Inbox folder ID | `1PE6IcZqJFHM7ISA4XKNHpifk8oCVyqdV` (in `refresh/config.json`; inside `03_Master File from Snowflake`, a shared drive) |
+| Upload service account | `masterdata-uploader@rfq-mecl-automation-project.iam.gserviceaccount.com` (Editor on the Inbox; key in `MASTERDATA_SA_KEY` in the cloud environment) |
 | Cloud environment | `purchasing-master` |
-| Schedule | 07:00 Europe/Berlin daily (not yet created) |
+| Schedule | 06:15 Europe/Berlin daily (not yet created) |
 
-Secrets (`MASTERDATA_TOKEN`, Script Property `REFRESH_TOKEN`) are never recorded here.
+Secrets (`MASTERDATA_SA_KEY`) are never recorded here.
 
 ## Phase 0 status
 

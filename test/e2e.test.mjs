@@ -1,22 +1,22 @@
 // End-to-end: begin/next through a whole fake run with the REAL sql/feeds.json and SQL files, then
-// finish against the vm-loaded Apps Script web app (gas-fakes) through a fetch shim.
+// finish against a fake Google (token endpoint + Drive uploads) through an injected fetch.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
+import { gunzipSync } from 'node:zlib';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, cpSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { begin, next, finish } from '../refresh/cli.mjs';
 import { loadManifest, sqlColumnsFor, headersFor } from '../refresh/lib/manifest.mjs';
-import { makeEnv } from './helpers/gas-fakes.mjs';
+import { fakeGoogle, KEY_JSON } from './helpers/sa-key.mjs';
 
 const repo = fileURLToPath(new URL('..', import.meta.url));
-const TOKEN = 'e'.repeat(64);
 const NOW = new Date('2026-10-30T06:00:03.000Z'); // 07:00:03 Berlin (CET)
 const RUN_ID = '2026-10-30T07-00-03';
 const BASE_YEAR = 2026;
 const ROWS_PER_FEED = { components: 3, multisource: 1, multisource_members: 2, component_usage: 3, products: 2, mecl_price: 1 };
-const TABS = ['Components', 'Multisource', 'Multisource_Members', 'Component_Usage', 'Products', 'MECL_Price'];
 
 const resultText = (columns, rows) => JSON.stringify({
   query_id: 'q',
@@ -70,7 +70,7 @@ function fixture(feed) {
   return { columns, raw, sheet };
 }
 
-test('e2e: begin/next over the real manifest, then finish into the Apps Script web app', async () => {
+test('e2e: begin/next over the real manifest, then finish into the Drive Inbox', async () => {
   const root = mkdtempSync(join(tmpdir(), 'pm-e2e-'));
   cpSync(join(repo, 'sql'), join(root, 'sql'), { recursive: true });
   const manifest = loadManifest(join(root, 'sql', 'feeds.json'));
@@ -114,58 +114,47 @@ test('e2e: begin/next over the real manifest, then finish into the Apps Script w
   }
   assert.deepEqual(kinds, ['health', ...manifest.feeds.flatMap((f) => [`count:${f.feed}`, `page:${f.feed}`])]);
 
-  // finish -> doPost of the vm-loaded web app.
-  const gas = makeEnv({ props: { REFRESH_TOKEN: TOKEN } });
-  gas.ss.locale = 'de_DE';
-  const actions = [];
-  const fetchImpl = async (url, init) => {
-    actions.push(JSON.parse(init.body).action);
-    const text = gas.context.doPost({ postData: { contents: init.body } }).getContent();
-    return { status: 200, text: async () => text };
-  };
+  // finish -> Drive Inbox through a fake fetch.
+  const g = fakeGoogle();
   const res = await finish({
     root,
-    env: { MASTERDATA_WEBAPP_URL: 'https://script.invalid/exec', MASTERDATA_TOKEN: TOKEN },
-    fetchImpl,
+    env: { MASTERDATA_SA_KEY: KEY_JSON, MASTERDATA_INBOX_ID: 'INBOX' },
+    fetchImpl: g.fetchImpl,
     sleep: async () => {},
+    now: () => NOW.getTime(),
   });
   const counts = manifest.feeds.map((f) => `${f.feed}=${ROWS_PER_FEED[f.feed]}`).join(' ');
-  assert.equal(res, `DONE ${counts}`);
-  assert.deepEqual(actions, ['begin', ...manifest.feeds.filter((f) => ROWS_PER_FEED[f.feed]).map(() => 'chunk'), 'commit']);
+  assert.equal(res, `DONE uploaded ${RUN_ID} ${counts}`);
 
-  // Live tabs: expected headers and rows, in TABS order, no staging left.
-  assert.deepEqual(gas.ss.names(), [...TABS, '_Refresh_Log']);
-  for (const f of manifest.feeds) {
-    const sheet = gas.ss.getSheetByName(f.tab);
-    assert.deepEqual(sheet.data(), [headersFor(f, BASE_YEAR), ...fixtures[f.feed].sheet], f.feed);
-    assert.equal(sheet.isSheetHidden(), false);
-  }
-  const comp = gas.ss.getSheetByName('Components');
-  const mpnCol = headersFor(manifest.feeds[0], BASE_YEAR).indexOf('MPN') + 1;
-  assert.equal(comp.getCell(2, mpnCol), '0402');
-  assert.equal(typeof comp.getCell(2, mpnCol), 'string');
-  assert.equal(comp.getCell(3, mpnCol), '1E3');
-  assert.equal(comp.getFormat(2, mpnCol), '@', 'text format keeps the leading zero');
-  assert.equal(gas.ss.getSpreadsheetLocale(), 'en_US');
+  // One token request, then data files in manifest order and the manifest last.
+  assert.equal(g.calls[0].url, 'https://oauth2.googleapis.com/token');
+  assert.equal(g.calls.filter((c) => !c.upload).length, 1);
+  const ups = g.uploads();
+  assert.deepEqual(ups.map((u) => u.meta.name), [...manifest.feeds.map((f) => `${RUN_ID}__${f.feed}.json.gz`), `${RUN_ID}__manifest.json`]);
+  assert.ok(ups.every((u) => u.meta.parents[0] === 'INBOX' && u.url.includes('supportsAllDrives=true')));
 
-  // Raw snapshots: six CSVs with header + rows.
-  const day = gas.drive.root.folder('Raw snapshots').folder('2026-10-30');
-  assert.deepEqual(day.fileNames(), manifest.feeds.map((f) => `${f.feed}.csv`).sort());
-  for (const f of manifest.feeds) {
-    const lines = day.file(`${f.feed}.csv`).getBlob().getDataAsString().trimEnd().split('\n');
-    assert.equal(lines.length, 1 + ROWS_PER_FEED[f.feed], f.feed);
-  }
-  assert.match(day.file('components.csv').getBlob().getDataAsString(), /,0402,/);
-
-  // _Refresh_Log: one OK row per feed, Started = CLI run start in Berlin time; B1 ISO UTC.
-  const log = gas.ss.getSheetByName('_Refresh_Log').data();
-  assert.match(log[0][1], /Z$/);
-  assert.equal(log[1][1], BASE_YEAR);
-  assert.deepEqual(log.slice(4).map((r) => [r[0], r[1], r[3], r[4], r[6]]),
-    manifest.feeds.map((f) => [RUN_ID, '2026-10-30 07:00:03', f.feed, ROWS_PER_FEED[f.feed], 'OK']));
+  const m = JSON.parse(ups.at(-1).media.toString('utf8'));
+  assert.deepEqual([m.version, m.runId, m.status, m.baseYear, m.startedAt, m.publishedAt], [1, RUN_ID, 'ready', BASE_YEAR, NOW.toISOString(), NOW.toISOString()]);
+  assert.equal(Number(m.health.BASE_YEAR), BASE_YEAR);
+  assert.equal(m.feeds.length, manifest.feeds.length);
+  manifest.feeds.forEach((f, i) => {
+    const entry = m.feeds[i];
+    const gz = ups[i].media;
+    assert.equal(entry.feed, f.feed);
+    assert.equal(entry.tab, f.tab);
+    assert.deepEqual(entry.headers, headersFor(f, BASE_YEAR));
+    assert.equal(entry.rowCount, ROWS_PER_FEED[f.feed]);
+    assert.equal(entry.file, `${RUN_ID}__${f.feed}.json.gz`);
+    assert.equal(entry.sha256, createHash('sha256').update(gz).digest('hex'));
+    assert.deepEqual(JSON.parse(gunzipSync(gz).toString('utf8')), fixtures[f.feed].sheet.map((r) => r.map((v) => (v === '' ? null : v))), f.feed); // shaped rows carry null for empty cells
+  });
+  const comp = JSON.parse(gunzipSync(ups[0].media).toString('utf8'));
+  const mpnCol = headersFor(manifest.feeds[0], BASE_YEAR).indexOf('MPN');
+  assert.equal(comp[0][mpnCol], '0402');
+  assert.equal(typeof comp[0][mpnCol], 'string');
+  assert.equal(comp[1][mpnCol], '1E3');
 
   // CLI run closed.
-  assert.equal(JSON.parse(readFileSync(join(root, 'runs', RUN_ID, 'state.json'), 'utf8')).phase, 'pushed');
+  assert.equal(JSON.parse(readFileSync(join(root, 'runs', RUN_ID, 'state.json'), 'utf8')).phase, 'uploaded');
   assert.ok(!existsSync(join(root, 'runs', 'CURRENT')));
-  assert.equal(gas.stored.ACTIVE_RUN, undefined);
 });

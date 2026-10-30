@@ -2,14 +2,14 @@
 
 ## Flow
 
-1. A cloud task (environment `purchasing-master`, 07:00 Europe/Berlin) runs the `nightly-refresh` skill with the Snowflake connector only.
+1. A cloud task (environment `purchasing-master`, 06:15 Europe/Berlin, after the ~05:45 Snowflake refresh) runs the `nightly-refresh` skill with the Snowflake connector only.
 2. The skill drives `refresh/cli.mjs` (`begin`, `next` loop, `finish` / `fail`). The CLI hands out one SQL at a time; the skill runs it through the connector and runs no other Snowflake query.
 3. A PostToolUse hook (`.claude/settings.json` -> `node "$CLAUDE_PROJECT_DIR/refresh/capture-hook.mjs"`) saves each connector result under `runs/<runId>/captures/` while `runs/CURRENT` exists. The hook finds the repo from `CLAUDE_PROJECT_DIR`, else from the hook input's `cwd`. The model never sees or copies rows.
 4. `next` compares the captured SQL with the pending SQL (whitespace-normalised), parses the result, and plans the next query: health check, then per feed a count query and keyset pages.
    - Paging: the first page of every feed asks for `pageLimit` (500) rows; each full page sizes the next one to about `targetPageChars` (250000, top level of `sql/feeds.json`) characters, clamped to 100..20000. A truncated page (fewer rows than `numRows`) is re-asked with the same key and limit `max(100, floor(rows that fit * 0.8))`.
    - A result that cannot be parsed aborts with `unrecognized connector result: <first 200 characters, newlines collapsed>`.
-5. `finish` re-reads the captures, shapes the rows, and POSTs them to the Apps Script web app (`begin`, `chunk`, `commit`).
-6. The web app writes the MasterData tabs, a Raw snapshots CSV per feed, and `_Refresh_Log`.
+5. `finish` re-reads the captures, verifies and shapes the rows, and uploads them into the Drive Inbox (a folder in the company shared drive) with the service account `masterdata-uploader`: one `<runId>__<feed>.json.gz` per feed, then `<runId>__manifest.json` last (its presence means the run's files are complete). A failed run uploads only a `failed` manifest (`feeds: []`, with `reason`). The state ends as `uploaded` or `failed`.
+6. An Apps Script puller (every 15 minutes) reads the Inbox, checks the sha256 and row counts, writes the MasterData tabs, a Raw snapshots CSV per feed, and `_Refresh_Log` (Task A2).
 7. A daily time-driven trigger (10:00 Europe/Berlin) runs `checkDailyRefresh` and logs `NO_REFRESH` when no run succeeded that day (R37).
 
 ## Files
@@ -24,7 +24,9 @@
 | `refresh/lib/sql.mjs`, `sql/health.sql`, `sql/feeds/*.sql` | SQL rendering, count and keyset page queries, page sizing |
 | `refresh/lib/result.mjs` | Parses connector results |
 | `refresh/lib/shape.mjs` | Converts raw rows to typed sheet rows |
-| `refresh/lib/push.mjs` | Chunking (gzip + base64) and HTTP POST with retry |
+| `refresh/lib/google-auth.mjs` | Service account JWT (RS256, `node:crypto`) exchanged for an access token |
+| `refresh/lib/inbox.mjs` | Builds the Inbox files (gz data + manifest) and uploads them with multipart Drive requests, retrying network errors and 5xx |
+| `refresh/config.json` | `inboxFolderId` (override: env `MASTERDATA_INBOX_ID`) |
 | `refresh/lib/state.mjs` | Run id, state file, capture lookup |
 | `apps-script/MasterData/Config.ts` | Constants (token property, folder name, row-drop limit, log sheet, time zone, locale, watchdog hour) |
 | `apps-script/MasterData/WebApp.ts` | `doPost`: token check, script lock, actions |
@@ -34,7 +36,13 @@
 | `scripts/release-gas.mjs`, `scripts/release-config.json` | Release: tests, clasp push, version, deploy to the fixed deployment |
 | `docs/sheets.md` | Tab and header contract |
 
-## Protocol (web app actions)
+## Environment and network
+
+- `MASTERDATA_SA_KEY`: the service account key JSON text (never written to disk, logged or committed). Missing or not a service account key: `finish` refuses and keeps `runs/CURRENT`.
+- `MASTERDATA_INBOX_ID` (optional): Inbox folder id, default from `refresh/config.json`.
+- Network allowlist for the cloud environment: `oauth2.googleapis.com`, `www.googleapis.com` (plus the Snowflake connector). Every Drive call passes `supportsAllDrives=true`; a data file is limited to 5 MB (multipart upload).
+
+## Protocol (web app actions, no longer used by the nightly run)
 
 All requests are JSON POSTs with `token`.
 - `begin`: `runId`, `startedAt` (ISO, the CLI run start), `baseYear`, per-feed `{feed, tab, headers, types, rowCount}`, `health`. Sets the spreadsheet locale to `en_US` if it differs. If another run is active (different `runId`) it is logged as `ABANDONED` (`replaced by <runId>`) and its leftovers are removed.
@@ -56,5 +64,5 @@ All requests are JSON POSTs with `token`.
 - Every action (and the watchdog) runs under the script lock; begin/chunk/commit/fail never interleave.
 - Health check (`sql/health.sql`) must report zero problems, else the run aborts before fetching. It blocks on `PLATFORM_HEALTH` rows with `IS_PROBLEM` where `AREA = 'MECL_SNAPSHOT'` or `OBJECT_NAME` is `TASK_REFRESH_PURCHASING`, `TASK_REFRESH_SUPPLY_CHAIN` or `TASK_REFRESH_PLATFORM_HEALTH` (R34); `PROBLEM_LIST` entries read `AREA/OBJECT_NAME:STATUS`.
 - Duplicate `ROW_KEY`, count mismatch, or a truncated page at minimum size abort the run.
-- If the `commit` request ends in a transient error the outcome is unknown: the CLI reports `FAILED commit status unknown` and the run state is `unknown`; check `_Refresh_Log` before retrying.
+- The manifest is uploaded last, so the puller never sees a half-uploaded run; an upload error fails the run (phase `failed`, best-effort `failed` manifest).
 - The skill must not edit repo files or commit.

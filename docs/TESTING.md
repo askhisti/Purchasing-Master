@@ -7,9 +7,9 @@
 
 ## What the automated tests cover
 
-- Refresh CLI logic: manifest (including `pageLimit` 500 and `targetPageChars`), SQL rendering and page sizing, the health gate text, result parsing, shaping, chunking and push with a fake fetch, the `next` state machine with fixture captures, the capture hook (repo root from `CLAUDE_PROJECT_DIR` or input `cwd`), main-module detection through a symlink/junction, `.claude/settings.json` and the skill's no-other-query rule.
+- Refresh CLI logic: manifest (including `pageLimit` 500 and `targetPageChars`), SQL rendering and page sizing, the health gate text, result parsing, shaping, service account JWT signing and token request, Inbox payload building and multipart upload (order, retry, 5 MB limit), `finish`/`fail` against a fake Google fetch, a key-leak scan of stdout and error messages, the `next` state machine with fixture captures, the capture hook (repo root from `CLAUDE_PROJECT_DIR` or input `cwd`), main-module detection through a symlink/junction, `.claude/settings.json` and the skill's no-other-query rule.
 - Apps Script code (`Core`, `Sheets`, `WebApp`, `Watchdog`) loaded in Node `vm` against fake SpreadsheetApp (including locale), DriveApp, Properties, Lock, Utilities (`formatDate`) and ScriptApp (triggers): token auth, actions, staging and swap, log (Berlin times, `ABANDONED`, `NO_REFRESH`), guards, default-sheet cleanup, watchdog trigger install.
-- End to end (`test/e2e.test.mjs`): `begin`/`next` over the real `sql/feeds.json` and SQL files with generated captures for all six feeds, then `finish` through a fetch shim into the vm-loaded `doPost`: six live tabs with the expected headers and rows, `0402` kept as text, six CSV snapshots, `OK` log rows.
+- End to end (`test/e2e.test.mjs`): `begin`/`next` over the real `sql/feeds.json` and SQL files with generated captures for all six feeds, then `finish` against a fake Google fetch: one token request, six gz data files then the manifest last, decoded headers and rows with `0402` kept as a string and matching sha256 and row counts.
 - Release config validation (`scripts/release-lib.mjs`).
 
 ## What they do not cover

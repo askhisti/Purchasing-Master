@@ -3,7 +3,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadManifest, sqlColumnsFor } from './lib/manifest.mjs';
 import { shapeFeed } from './lib/shape.mjs';
-import { chunkRows, postJson } from './lib/push.mjs';
+import { getAccessToken, parseServiceAccountKey } from './lib/google-auth.mjs';
+import { buildPayload, uploadToInbox } from './lib/inbox.mjs';
 import { parseConnectorResult } from './lib/result.mjs';
 import { renderFeedSql, buildCountSql, buildPageSql, nextLimit, shrinkLimit } from './lib/sql.mjs';
 import { berlinRunId, loadState, saveState, newestCaptureAfter, runsDir, currentRunId } from './lib/state.mjs';
@@ -188,14 +189,9 @@ function endRun(root, state, phase, failure) {
   fs.rmSync(path.join(runsDir(root), 'CURRENT'), { force: true });
 }
 
-function webappConfig(env) {
-  const url = env.MASTERDATA_WEBAPP_URL;
-  const token = env.MASTERDATA_TOKEN;
-  return url && token ? { url, token } : null;
-}
-
-const NOT_ACTIVE_RUN = 'not the active run';
-const MISSING_ENV = 'FAILED missing MASTERDATA_WEBAPP_URL or MASTERDATA_TOKEN';
+const MISSING_KEY = 'missing MASTERDATA_SA_KEY';
+const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive';
+const CONFIG_FILE = fileURLToPath(new URL('./config.json', import.meta.url));
 
 // Re-reads every feed's captured pages, checks them against the fetch-time counts, and shapes them.
 function prepareFeeds(root, state, manifest) {
@@ -224,77 +220,67 @@ function prepareFeeds(root, state, manifest) {
   });
 }
 
-async function bestEffortFail(post, runId, reason) {
+function inboxFolderId(env) {
+  const id = env.MASTERDATA_INBOX_ID || JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8')).inboxFolderId;
+  if (!id) throw new Error('no Inbox folder id (refresh/config.json inboxFolderId or MASTERDATA_INBOX_ID)');
+  return id;
+}
+
+async function uploadFiles({ env, files, fetchImpl, sleep, now }) {
+  const token = await getAccessToken({ keyJson: env.MASTERDATA_SA_KEY, scope: DRIVE_SCOPE, fetchImpl, now });
+  return uploadToInbox({ folderId: inboxFolderId(env), files, token, fetchImpl, sleep });
+}
+
+const isoNow = (now) => new Date(now ? now() : Date.now()).toISOString();
+
+// Best effort: a failed manifest tells the puller the run is over. Returns '' or a note for the message.
+async function bestEffortFail(io, state, reason) {
   try {
-    await post({ action: 'fail', runId, reason });
+    const { files } = buildPayload(state, [], { status: 'failed', reason, publishedAt: isoNow(io.now) });
+    await uploadFiles({ ...io, files });
     return '';
   } catch (e) {
-    return `; fail notification also failed: ${e && e.message ? e.message : e}`;
+    return `; failed manifest also not uploaded: ${e && e.message ? e.message : e}`;
   }
 }
 
-export async function finish({ root, env = process.env, fetchImpl, sleep, chunkBytes }) {
-  const cfg = webappConfig(env);
-  if (!cfg) return MISSING_ENV;
+export async function finish({ root, env = process.env, fetchImpl, sleep, now }) {
+  if (!env.MASTERDATA_SA_KEY) return `FAILED ${MISSING_KEY}`;
+  try {
+    parseServiceAccountKey(env.MASTERDATA_SA_KEY);
+  } catch (e) {
+    return `FAILED ${e.message}`;
+  }
   const state = loadState(root);
   if (state.phase !== 'fetched') return `FAILED run is not fetched (phase ${state.phase})`;
-  const opts = { fetchImpl, sleep };
-  const post = (body, extra) => postJson(cfg.url, { token: cfg.token, ...body }, { ...opts, ...extra });
-  const runId = state.runId;
+  const io = { env, fetchImpl, sleep, now };
   try {
     const manifest = loadManifest(path.join(root, 'sql', 'feeds.json'));
     const feeds = prepareFeeds(root, state, manifest);
-    await post({
-      action: 'begin',
-      runId,
-      startedAt: state.startedAt,
-      baseYear: state.baseYear,
-      feeds: feeds.map((f) => ({ feed: f.feedDef.feed, tab: f.feedDef.tab, headers: f.headers, types: f.types, rowCount: f.rows.length })),
-      health: state.health,
-    });
-    for (const f of feeds) {
-      const chunks = chunkRows(f.rows, chunkBytes);
-      for (let i = 0; i < chunks.length; i++) {
-        await post({ action: 'chunk', runId, feed: f.feedDef.feed, seq: i + 1, rowsB64Gzip: chunks[i] });
-      }
-    }
-    let res;
-    try {
-      res = await post({ action: 'commit', runId }, { delays: [], timeoutMs: 360000 });
-    } catch (e) {
-      if (e && e.transient) {
-        endRun(root, state, 'unknown', e.message);
-        return `FAILED commit status unknown — check _Refresh_Log: ${e.message}`;
-      }
-      // R35: a commit rejected with {ok:false} was already discarded and logged FAILED by the
-      // server; a fail POST would add a second log row. Only "not the active run" still needs it.
-      if (e && e.rejected && e.message !== NOT_ACTIVE_RUN) {
-        endRun(root, state, 'failed', e.message);
-        return `FAILED ${e.message}`;
-      }
-      throw e;
-    }
-    endRun(root, state, 'pushed');
+    const { files } = buildPayload(state, feeds, { publishedAt: isoNow(now) });
+    await uploadFiles({ ...io, files });
+    endRun(root, state, 'uploaded');
     const counts = feeds.map((f) => `${f.feedDef.feed}=${f.rows.length}`).join(' ');
-    return res.warning ? `DONE ${counts} WARNING ${res.warning}` : `DONE ${counts}`;
+    return `DONE uploaded ${state.runId} ${counts}`;
   } catch (e) {
     const message = e && e.message ? e.message : String(e);
-    const extra = await bestEffortFail(post, runId, message);
+    const extra = await bestEffortFail(io, state, message);
     endRun(root, state, 'failed', message);
     return `FAILED ${message}${extra}`;
   }
 }
 
-export async function fail({ root, reason, env = process.env, fetchImpl, sleep }) {
-  const state = loadState(root);
+export async function fail({ root, reason, env = process.env, fetchImpl, sleep, now }) {
   const msg = reason || 'failed';
-  const cfg = webappConfig(env);
-  if (!cfg) {
-    endRun(root, state, 'failed', msg);
-    return MISSING_ENV;
+  let state;
+  try {
+    state = loadState(root);
+  } catch {
+    return `FAILED ${msg}`;
   }
-  const post = (body) => postJson(cfg.url, { token: cfg.token, ...body }, { fetchImpl, sleep });
-  const extra = await bestEffortFail(post, state.runId, msg);
+  const extra = env.MASTERDATA_SA_KEY
+    ? await bestEffortFail({ env, fetchImpl, sleep, now }, state, msg)
+    : `; failed manifest not uploaded: ${MISSING_KEY}`;
   endRun(root, state, 'failed', msg);
   return `FAILED ${msg}${extra}`;
 }
