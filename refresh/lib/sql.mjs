@@ -46,11 +46,14 @@ export function nextLimit(prevLimit, chars, rowsReturned, target = 250000) {
   return Math.min(MAX_LIMIT, Math.max(MIN_LIMIT, raw));
 }
 
-// Shrink the limit after a truncated page: scale by the fraction actually returned,
-// with a 0.8 safety factor, never below the minimum. Returns MIN_LIMIT when numRows
-// is 0 or the result is not finite.
+// Shrink the limit after a truncated page. On a truncated page (rowsReturned below
+// min(limit, numRows)) the rows that fit are the right scale, so the next limit is
+// rowsReturned with a 0.8 safety factor; otherwise the limit is scaled by the fraction
+// returned. Never below the minimum; MIN_LIMIT when the inputs give no finite result.
 export function shrinkLimit(limit, rowsReturned, numRows) {
-  const scaled = Math.floor((limit * rowsReturned) / numRows * 0.8);
+  const scaled = rowsReturned < Math.min(limit, numRows)
+    ? Math.floor(rowsReturned * 0.8)
+    : Math.floor((limit * rowsReturned) / numRows * 0.8);
   if (!Number.isFinite(scaled)) return MIN_LIMIT;
   return Math.max(MIN_LIMIT, scaled);
 }

@@ -117,3 +117,19 @@ test('health.sql returns BASE_YEAR, PROBLEM_COUNT, PROBLEM_LIST', () => {
   for (const a of ['BASE_YEAR', 'PROBLEM_COUNT', 'PROBLEM_LIST']) assert.match(sql, new RegExp(`AS ${a}\\b`));
   assert.ok(!/\{\{/.test(sql));
 });
+
+test('paging: every feed starts at pageLimit 500; targetPageChars is 250000', () => {
+  for (const f of manifest.feeds) assert.equal(f.pageLimit, 500, f.feed);
+  assert.equal(manifest.targetPageChars, 250000);
+});
+
+test('R34: health gate blocks on the MECL snapshot area and the three refresh tasks only', () => {
+  const sql = fs.readFileSync(path.join(root, 'sql/health.sql'), 'utf8');
+  // Comments removed, whitespace collapsed, no space just inside parentheses.
+  const n = sql.replace(/--[^\n]*/g, '').replace(/\s+/g, ' ').replace(/\( /g, '(').replace(/ \)/g, ')');
+  const gate = "IS_PROBLEM AND (AREA = 'MECL_SNAPSHOT' OR OBJECT_NAME IN ('TASK_REFRESH_PURCHASING', 'TASK_REFRESH_SUPPLY_CHAIN', 'TASK_REFRESH_PLATFORM_HEALTH'))";
+  assert.equal(n.split(gate).length - 1, 2, 'PROBLEM_COUNT and PROBLEM_LIST use the same gate');
+  // Feed view names never appear in PLATFORM_HEALTH, so they must not be the gate.
+  for (const v of ['COMPONENT_CATALOG', 'MULTISOURCE_PARTS', 'COMPONENT_PRICE_ITEMS', "LIKE 'MECL%'"]) assert.ok(!n.includes(v), v);
+  assert.ok(n.includes("COALESCE(AREA, '?') || '/' || COALESCE(OBJECT_NAME, '?') || ':' || COALESCE(STATUS, '?')"), 'PROBLEM_LIST entry format');
+});

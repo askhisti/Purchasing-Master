@@ -1,5 +1,6 @@
 // Claude Code PostToolUse hook: saves each Snowflake sql tool result verbatim to
 // runs/<runId>/captures/<NNNN>.json. Active only while runs/CURRENT exists.
+// Repo root: env CLAUDE_PROJECT_DIR when set (Claude Code sets it for hooks), else input.cwd.
 // A hook must never break the session: every failure exits 0.
 import { readFileSync, writeFileSync, mkdirSync, readdirSync, existsSync } from 'node:fs';
 import { resolve, join } from 'node:path';
@@ -13,7 +14,7 @@ function responseText(r) {
 
 try {
   const input = JSON.parse(readFileSync(0, 'utf8'));
-  const base = resolve(input.cwd || process.cwd());
+  const base = resolve(process.env.CLAUDE_PROJECT_DIR || input.cwd || process.cwd());
   const currentFile = join(base, 'runs', 'CURRENT');
   if (existsSync(currentFile)) {
     const runId = readFileSync(currentFile, 'utf8').trim();

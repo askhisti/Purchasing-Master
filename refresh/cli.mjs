@@ -9,6 +9,8 @@ import { renderFeedSql, buildCountSql, buildPageSql, nextLimit, shrinkLimit } fr
 import { berlinRunId, loadState, saveState, newestCaptureAfter, runsDir, currentRunId } from './lib/state.mjs';
 
 const MIN_LIMIT = 100;
+const DEFAULT_TARGET_PAGE_CHARS = 250000;
+const SNIPPET_CHARS = 200;
 
 const normSql = (t) => String(t).replace(/\s+/g, ' ').trim();
 const runSql = (sql) => `RUN_SQL\n${sql}`;
@@ -62,6 +64,12 @@ function startFeed(root, state, manifest, index) {
   state.pendingSql = buildCountSql(feedSql(root, manifest.feeds[index], state.baseYear));
 }
 
+// Start of a raw connector response for an ABORT reason: newlines collapsed, 200 characters.
+function unrecognized(response) {
+  const snippet = String(response ?? '').replace(/[\r\n]+/g, ' ').slice(0, SNIPPET_CHARS);
+  return snippet ? `unrecognized connector result: ${snippet}` : 'unrecognized connector result';
+}
+
 function colValue(r, name) {
   const i = r.columns.indexOf(name);
   return i < 0 || !r.rows[0] ? undefined : r.rows[0][i];
@@ -76,14 +84,14 @@ export function next({ root }) {
   const cap = newestCaptureAfter(root, runId, state.lastSeq);
   if (!cap) return abort(root, state, 'expected result of the pending SQL');
   state.lastSeq = cap.seq;
-  if (cap.shape === 'unrecognized') return abort(root, state, 'unrecognized connector result');
+  if (cap.shape === 'unrecognized') return abort(root, state, unrecognized(cap.response));
   if (normSql(cap.sql) !== normSql(state.pendingSql)) return abort(root, state, 'expected result of the pending SQL');
 
   let r;
   try {
     r = parseConnectorResult(cap.response);
   } catch {
-    return abort(root, state, 'unrecognized connector result');
+    return abort(root, state, unrecognized(cap.response));
   }
 
   const manifest = loadManifest(path.join(root, 'sql', 'feeds.json'));
@@ -141,7 +149,7 @@ export function next({ root }) {
       lastKey: r.rows[r.rows.length - 1][0],
     });
     state.afterKey = r.rows[r.rows.length - 1][0];
-    state.limit = nextLimit(requested, r.chars, r.rows.length);
+    state.limit = nextLimit(requested, r.chars, r.rows.length, manifest.targetPageChars ?? DEFAULT_TARGET_PAGE_CHARS);
   }
 
   if (r.rows.length < requested) {
@@ -186,6 +194,7 @@ function webappConfig(env) {
   return url && token ? { url, token } : null;
 }
 
+const NOT_ACTIVE_RUN = 'not the active run';
 const MISSING_ENV = 'FAILED missing MASTERDATA_WEBAPP_URL or MASTERDATA_TOKEN';
 
 // Re-reads every feed's captured pages, checks them against the fetch-time counts, and shapes them.
@@ -238,6 +247,7 @@ export async function finish({ root, env = process.env, fetchImpl, sleep, chunkB
     await post({
       action: 'begin',
       runId,
+      startedAt: state.startedAt,
       baseYear: state.baseYear,
       feeds: feeds.map((f) => ({ feed: f.feedDef.feed, tab: f.feedDef.tab, headers: f.headers, types: f.types, rowCount: f.rows.length })),
       health: state.health,
@@ -255,6 +265,12 @@ export async function finish({ root, env = process.env, fetchImpl, sleep, chunkB
       if (e && e.transient) {
         endRun(root, state, 'unknown', e.message);
         return `FAILED commit status unknown — check _Refresh_Log: ${e.message}`;
+      }
+      // R35: a commit rejected with {ok:false} was already discarded and logged FAILED by the
+      // server; a fail POST would add a second log row. Only "not the active run" still needs it.
+      if (e && e.rejected && e.message !== NOT_ACTIVE_RUN) {
+        endRun(root, state, 'failed', e.message);
+        return `FAILED ${e.message}`;
       }
       throw e;
     }
@@ -290,7 +306,18 @@ const commands = {
   fail: (root, args) => fail({ root, reason: args.join(' ') }),
 };
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+// Main-module check on real paths: argv[1] may run through a symlink or junction while
+// import.meta.url is the resolved file.
+function isMain() {
+  if (!process.argv[1]) return false;
+  try {
+    return fs.realpathSync(process.argv[1]) === fs.realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    return false;
+  }
+}
+
+if (isMain()) {
   const name = process.argv[2];
   const cmd = commands[name];
   if (!cmd) {

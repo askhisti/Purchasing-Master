@@ -1,20 +1,24 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, symlinkSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { begin, next } from '../refresh/cli.mjs';
+import { nextLimit } from '../refresh/lib/sql.mjs';
 
 const FEED_A = 'SELECT ROW_KEY, V FROM t WHERE Y = {{BASE_YEAR}}';
 const FEED_B = 'SELECT ROW_KEY, W FROM u WHERE Y = {{BASE_YEAR}}';
 
-function makeRoot(pageLimit = 2) {
+function makeRoot(pageLimit = 2, extra = {}) {
   const root = mkdtempSync(join(tmpdir(), 'pm-cli-'));
   mkdirSync(join(root, 'sql', 'feeds'), { recursive: true });
   writeFileSync(join(root, 'sql', 'health.sql'), 'SELECT 1 AS BASE_YEAR');
   writeFileSync(join(root, 'sql', 'feeds', 'a.sql'), FEED_A);
   writeFileSync(join(root, 'sql', 'feeds', 'b.sql'), FEED_B);
   writeFileSync(join(root, 'sql', 'feeds.json'), JSON.stringify({
+    ...extra,
     feeds: [
       { feed: 'fa', tab: 'A', sqlFile: 'sql/feeds/a.sql', pageLimit, columns: [{ sql: 'V', header: 'V', type: 'string' }] },
       { feed: 'fb', tab: 'B', sqlFile: 'sql/feeds/b.sql', pageLimit: 2, columns: [{ sql: 'W', header: 'W', type: 'string' }] },
@@ -146,7 +150,7 @@ test('truncated page above minimum: same afterKey, smaller LIMIT, rows not store
   const sql2 = sqlOf(next({ root }));
   assert.equal(sql2.replace(/LIMIT \d+$/, ''), sql.replace(/LIMIT \d+$/, ''));
   const lim = Number(/LIMIT (\d+)$/.exec(sql2)[1]);
-  assert.ok(lim < 1000 && lim >= 100);
+  assert.equal(lim, 100, '2 rows fit -> floor(2 * 0.8) clamped to the minimum');
   const st = stateOf(root, runId);
   assert.equal(st.pages.length, 0);
   assert.equal(st.afterKey, null);
@@ -204,14 +208,57 @@ test('unrecognized capture aborts', () => {
   const root = makeRoot();
   const { out, runId } = start(root);
   cap(root, runId, sqlOf(out), 'garbage', { shape: 'unrecognized' });
-  assert.equal(next({ root }), 'ABORT unrecognized connector result');
+  assert.equal(next({ root }), 'ABORT unrecognized connector result: garbage');
 });
 
-test('unparseable response aborts as unrecognized', () => {
+test('unparseable response aborts as unrecognized, quoting the start of the response', () => {
   const root = makeRoot();
   const { out, runId } = start(root);
   cap(root, runId, sqlOf(out), 'not json');
-  assert.equal(next({ root }), 'ABORT unrecognized connector result');
+  assert.equal(next({ root }), 'ABORT unrecognized connector result: not json');
+});
+
+test('unparseable response: snippet is the first 200 characters with newlines collapsed', () => {
+  const root = makeRoot();
+  const { out, runId } = start(root);
+  const resp = 'Error: statement failed\r\n\nline two\n' + 'x'.repeat(400);
+  cap(root, runId, sqlOf(out), resp);
+  const res = next({ root });
+  const snippet = resp.replace(/[\r\n]+/g, ' ').slice(0, 200);
+  assert.equal(res, `ABORT unrecognized connector result: ${snippet}`);
+  assert.ok(!/[\r\n]/.test(res));
+  assert.equal(snippet.length, 200);
+});
+
+test('targetPageChars from feeds.json sizes the next page (default 250000)', () => {
+  const run = (extra) => {
+    const root = makeRoot(2, extra);
+    const { out, runId } = start(root);
+    cap(root, runId, sqlOf(out), healthResp());
+    let sql = sqlOf(next({ root }));
+    cap(root, runId, sql, countResp(5, 5));
+    sql = sqlOf(next({ root }));
+    const resp = pageResp([['k1', 'a'], ['k2', 'b']]);
+    cap(root, runId, sql, resp);
+    sql = sqlOf(next({ root }));
+    return { limit: Number(/LIMIT (\d+)$/.exec(sql)[1]), chars: resp.length };
+  };
+  const big = run({ targetPageChars: 1000000000 });
+  assert.equal(big.limit, 20000);
+  const small = run({ targetPageChars: 20000 });
+  assert.equal(small.limit, nextLimit(2, small.chars, 2, 20000));
+  const dflt = run({});
+  assert.equal(dflt.limit, nextLimit(2, dflt.chars, 2, 250000));
+  assert.notEqual(small.limit, dflt.limit);
+});
+
+test('cli.mjs runs as main module when started through a symlinked/junction path', () => {
+  const repo = fileURLToPath(new URL('..', import.meta.url));
+  const link = join(mkdtempSync(join(tmpdir(), 'pm-link-')), 'repo');
+  symlinkSync(repo, link, 'junction');
+  const res = spawnSync(process.execPath, [join(link, 'refresh', 'cli.mjs'), 'no-such-command'], { encoding: 'utf8' });
+  assert.equal(res.status, 2, `stdout=${res.stdout} stderr=${res.stderr}`);
+  assert.match(res.stderr, /usage: cli\.mjs/);
 });
 
 test('health.sql with trailing newline: pending has none, result accepted', () => {

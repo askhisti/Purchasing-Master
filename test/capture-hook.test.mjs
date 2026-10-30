@@ -19,9 +19,16 @@ function tempRepo(runId) {
   return dir;
 }
 
-function runHook(stdin, cwd = tmpdir()) {
+// Hook env without CLAUDE_PROJECT_DIR (the test runner may itself run inside Claude Code), plus extra.
+function hookEnv(extra = {}) {
+  const env = { ...process.env, ...extra };
+  if (!('CLAUDE_PROJECT_DIR' in extra)) delete env.CLAUDE_PROJECT_DIR;
+  return env;
+}
+
+function runHook(stdin, cwd = tmpdir(), env = hookEnv()) {
   // The process cwd is deliberately elsewhere: paths must resolve against input.cwd.
-  return spawnSync(process.execPath, [hook], { input: stdin, encoding: 'utf8', cwd });
+  return spawnSync(process.execPath, [hook], { input: stdin, encoding: 'utf8', cwd, env });
 }
 
 test('writes a numbered capture with sql and verbatim response', () => {
@@ -72,7 +79,7 @@ test('concurrent hooks never overwrite each other', async () => {
   const dir = tempRepo('r1');
   const n = 8;
   const runs = Array.from({ length: n }, (_, i) => new Promise((resolveRun) => {
-    const child = spawn(process.execPath, [hook], { cwd: tmpdir() });
+    const child = spawn(process.execPath, [hook], { cwd: tmpdir(), env: hookEnv() });
     child.on('close', (code) => resolveRun(code));
     child.stdin.end(JSON.stringify({ ...input, cwd: dir, tool_response: `response-${i}` }));
   }));
@@ -98,4 +105,20 @@ test('normal captures carry no shape flag', () => {
   runHook(JSON.stringify({ ...input, cwd: dir }));
   const cap = JSON.parse(readFileSync(join(dir, 'runs', 'r1', 'captures', '0001.json'), 'utf8'));
   assert.equal('shape' in cap, false);
+});
+
+test('CLAUDE_PROJECT_DIR wins over input.cwd as the repo root', () => {
+  const project = tempRepo('r1');
+  const other = tempRepo('r2');
+  const res = runHook(JSON.stringify({ ...input, cwd: other }), tmpdir(), hookEnv({ CLAUDE_PROJECT_DIR: project }));
+  assert.equal(res.status, 0);
+  assert.ok(existsSync(join(project, 'runs', 'r1', 'captures', '0001.json')), 'capture under CLAUDE_PROJECT_DIR');
+  assert.equal(existsSync(join(other, 'runs', 'r2')), false, 'nothing under input.cwd');
+});
+
+test('without CLAUDE_PROJECT_DIR the repo root is input.cwd', () => {
+  const dir = tempRepo('r1');
+  const res = runHook(JSON.stringify({ ...input, cwd: dir }), tmpdir(), hookEnv({ CLAUDE_PROJECT_DIR: '' }));
+  assert.equal(res.status, 0);
+  assert.ok(existsSync(join(dir, 'runs', 'r1', 'captures', '0001.json')));
 });

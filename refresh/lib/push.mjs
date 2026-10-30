@@ -57,7 +57,12 @@ export async function postJson(url, body, { fetchImpl = fetch, sleep = defaultSl
     } catch {
       throw transient(`HTTP ${res.status}: response is not JSON`);
     }
-    if (!json || json.ok !== true) throw new Error(json && json.error ? String(json.error) : 'request failed');
+    if (!json || json.ok !== true) {
+      // The server answered and rejected the request: not transient, outcome known.
+      const e = new Error(json && json.error ? String(json.error) : 'request failed');
+      e.rejected = true;
+      throw e;
+    }
     return json;
   }
   throw lastErr;

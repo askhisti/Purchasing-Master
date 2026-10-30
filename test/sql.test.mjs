@@ -75,8 +75,18 @@ test('nextLimit returns 100 (never NaN) when rowsReturned is 0', () => {
   assert.equal(nextLimit(2000, 0, 0), 100);
 });
 
-test('shrinkLimit scales by returned/total with 0.8 safety factor', () => {
+test('shrinkLimit: a truncated page sizes the next limit from the rows that fit (x0.8)', () => {
   assert.equal(shrinkLimit(5000, 2137, 5000), 1709);
+});
+
+test('shrinkLimit: truncated last page (numRows below limit) still uses the rows that fit', () => {
+  // Old formula scaled by rows/numRows and gave 1233, which can truncate again.
+  assert.equal(shrinkLimit(5000, 850, 2757), 680);
+});
+
+test('shrinkLimit returns 100 (never NaN) for non-numeric input', () => {
+  assert.equal(shrinkLimit(5000, NaN, 5000), 100);
+  assert.equal(shrinkLimit(NaN, 10, NaN), 100);
 });
 
 test('shrinkLimit never goes below 100', () => {

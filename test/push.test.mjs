@@ -83,7 +83,7 @@ function makeRun({ dupKey = false, rowCountOff = 0 } = {}) {
   cap(2, [[dupKey ? 'k1' : 'k3', 'z', '2']], ['ROW_KEY', 'V', 'N']);
   cap(3, [], ['ROW_KEY', 'W']);
   const state = {
-    runId: RUN_ID, phase: 'fetched', baseYear: 2027, health: { BASE_YEAR: 2027, PROBLEM_COUNT: 0 },
+    runId: RUN_ID, startedAt: '2026-10-30T01:00:00.000Z', phase: 'fetched', baseYear: 2027, health: { BASE_YEAR: 2027, PROBLEM_COUNT: 0 },
     done: [
       { feed: 'fa', expected: { rowCount: 3 + rowCountOff, keyCount: 3 + rowCountOff }, pages: [
         { captureSeq: 1, rows: 2, firstKey: 'k1', lastKey: 'k2' }, { captureSeq: 2, rows: 1, firstKey: 'k3', lastKey: 'k3' }] },
@@ -107,6 +107,7 @@ test('finish sends begin, chunks in seq order, commit', async () => {
   const begin = s.requests[0].body;
   assert.deepEqual(begin.feeds.map((x) => [x.feed, x.tab, x.rowCount]), [['fa', 'A', 3], ['fb', 'B', 0]]);
   assert.deepEqual(begin.feeds[0].types, ['string', 'number']);
+  assert.equal(begin.startedAt, '2026-10-30T01:00:00.000Z', 'R36: begin carries the CLI run start');
   assert.equal(s.requests[1].body.seq, 1);
   assert.deepEqual(decode(s.requests[1].body.rowsB64Gzip), [['0402', 1.5], ['1E3', null], ['z', 2]]);
   assert.equal(stateOf(root).phase, 'pushed');
@@ -121,17 +122,28 @@ test('finish prints warning from commit', async () => {
   assert.equal(out, 'DONE fa=3 fb=0 WARNING w1');
 });
 
-test('finish: commit failure posts fail and prints FAILED', async () => {
+test('R35: commit rejected with {ok:false} prints FAILED and posts no fail (server already logged it)', async () => {
   const root = makeRun();
   const s = await server((b) => (b.action === 'commit' ? { json: { ok: false, error: 'boom' } } : {}));
   const out = await finish({ root, env: envOf(s), sleep: async () => {} });
   s.close();
   assert.equal(out, 'FAILED boom');
+  assert.deepEqual(s.requests.map((r) => r.body.action), ['begin', 'chunk', 'commit']);
+  assert.equal(stateOf(root).phase, 'failed');
+  assert.equal(stateOf(root).failure, 'boom');
+  assert.ok(!existsSync(join(root, 'runs', 'CURRENT')));
+});
+
+test('R35: commit rejected as "not the active run" still posts fail', async () => {
+  const root = makeRun();
+  const s = await server((b) => (b.action === 'commit' ? { json: { ok: false, error: 'not the active run' } } : {}));
+  const out = await finish({ root, env: envOf(s), sleep: async () => {} });
+  s.close();
+  assert.equal(out, 'FAILED not the active run');
   const last = s.requests.at(-1).body;
   assert.equal(last.action, 'fail');
-  assert.equal(last.reason, 'boom');
+  assert.equal(last.reason, 'not the active run');
   assert.equal(stateOf(root).phase, 'failed');
-  assert.ok(!existsSync(join(root, 'runs', 'CURRENT')));
 });
 
 test('finish: duplicate keys and count mismatch fail before begin', async () => {
@@ -217,7 +229,7 @@ test('finish: begin failure and chunk failure post fail', async () => {
 
 test('finish: failing fail notification is appended', async () => {
   const root = makeRun();
-  const s = await server((b) => (b.action === 'commit' ? { json: { ok: false, error: 'boom' } } : b.action === 'fail' ? { json: { ok: false, error: 'nope' } } : {}));
+  const s = await server((b) => (b.action === 'chunk' ? { json: { ok: false, error: 'boom' } } : b.action === 'fail' ? { json: { ok: false, error: 'nope' } } : {}));
   const out = await finish({ root, env: envOf(s), sleep: async () => {} });
   s.close();
   assert.equal(out, 'FAILED boom; fail notification also failed: nope');

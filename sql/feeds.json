@@ -1,10 +1,11 @@
 {
+  "targetPageChars": 250000,
   "feeds": [
     {
       "feed": "components",
       "tab": "Components",
       "sqlFile": "sql/feeds/components.sql",
-      "pageLimit": 5000,
+      "pageLimit": 500,
       "columns": [
         {
           "sql": "ME_EC",
@@ -81,7 +82,7 @@
       "feed": "multisource",
       "tab": "Multisource",
       "sqlFile": "sql/feeds/multisource.sql",
-      "pageLimit": 1000,
+      "pageLimit": 500,
       "columns": [
         {
           "sql": "ME_MS",
@@ -118,7 +119,7 @@
       "feed": "multisource_members",
       "tab": "Multisource_Members",
       "sqlFile": "sql/feeds/multisource_members.sql",
-      "pageLimit": 5000,
+      "pageLimit": 500,
       "columns": [
         {
           "sql": "ME_MS",
@@ -161,7 +162,7 @@
       "feed": "component_usage",
       "tab": "Component_Usage",
       "sqlFile": "sql/feeds/component_usage.sql",
-      "pageLimit": 2000,
+      "pageLimit": 500,
       "columns": [
         {
           "sql": "ME_EC",
@@ -223,7 +224,7 @@
       "feed": "products",
       "tab": "Products",
       "sqlFile": "sql/feeds/products.sql",
-      "pageLimit": 5000,
+      "pageLimit": 500,
       "columns": [
         {
           "sql": "PRODUCT_ID",
@@ -276,7 +277,7 @@
       "feed": "mecl_price",
       "tab": "MECL_Price",
       "sqlFile": "sql/feeds/mecl_price.sql",
-      "pageLimit": 1500,
+      "pageLimit": 500,
       "columns": [
         {
           "sql": "PRICE_ID",
