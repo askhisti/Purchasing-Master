@@ -193,7 +193,7 @@ test('slicing stops when elapsed + the previous slice would pass 270 s; the next
   assert.deepStrictEqual(run.feeds.map((f) => f.staged), [2, 0, 0, 0, 0, 0]);
   assert.strictEqual(e.ss.getSheetByName('Components'), null, 'live tabs untouched while staging');
   assert.strictEqual(e.inbox.fileNames().length, 7, 'Inbox files stay until the run ends');
-  // R51: a one-off continuation trigger in 60 s; the 15-minute trigger stays.
+  // R51: a one-off continuation trigger in 60 s; the 5-minute trigger stays.
   let oneOffs = oneOffTriggers(e);
   assert.strictEqual(oneOffs.length, 1);
   assert.strictEqual(oneOffs[0].after, 60000);
@@ -217,7 +217,7 @@ test('slicing stops when elapsed + the previous slice would pass 270 s; the next
   assert.deepStrictEqual(entries(e).map((r) => r[6]), Array(6).fill('OK'), 'no ABANDONED, RETRY or FAILED rows');
   assert.deepStrictEqual(e.inbox.fileNames(), []);
   assert.deepStrictEqual(oneOffTriggers(e), [], 'no continuation left after the commit');
-  assert.deepStrictEqual(e.triggers.filter((t) => t.everyMinutes === 15).length, 1, 'the 15-minute trigger is kept');
+  assert.deepStrictEqual(e.triggers.filter((t) => t.everyMinutes === 5).length, 1, 'the 5-minute trigger is kept');
 });
 
 test('the commit only starts before 150 s of the poll; later it waits for the next poll', () => {
@@ -435,7 +435,7 @@ test('a manifest at or before LAST_PROCESSED_RUN is never processed again; its l
   assert.strictEqual(e.stored.LAST_PROCESSED_RUN, RUN2);
   // The older run is logged SUPERSEDED; leftovers of the last processed run itself are not logged.
   assert.deepStrictEqual(entries(e).map((r) => [r[0], r[6], r[7]]),
-    [[RUN, 'SUPERSEDED', `not processed: the newer run ${RUN2} was already processed; files trashed`]]);
+    [[RUN, 'SUPERSEDED', `older run superseded by ${RUN2}; files trashed`]]);
 });
 
 test('a runId more than a day in the future is FAILED without moving LAST_PROCESSED_RUN', () => {
@@ -623,7 +623,7 @@ test('an unexpected error is rethrown only when nothing could be logged', () => 
   assert.deepStrictEqual(e.lockLog.map((l) => l[0]), ['try', 'release'], 'the lock is released');
 });
 
-test('installPullTrigger replaces pollInbox triggers with one trigger every 15 minutes', () => {
+test('R54: installPullTrigger replaces pollInbox triggers with one trigger every 5 minutes', () => {
   const e = env();
   const other = e.trigger({ handler: 'checkDailyRefresh' });
   e.triggers.push(other, e.trigger({ handler: 'pollInbox' }), e.trigger({ handler: 'pollInbox' }));
@@ -631,7 +631,7 @@ test('installPullTrigger replaces pollInbox triggers with one trigger every 15 m
   e.context.installPullTrigger();
   const mine = e.triggers.filter((t) => t.getHandlerFunction() === 'pollInbox');
   assert.strictEqual(mine.length, 1);
-  assert.deepStrictEqual({ type: mine[0].type, everyMinutes: mine[0].everyMinutes }, { type: 'CLOCK', everyMinutes: 15 });
+  assert.deepStrictEqual({ type: mine[0].type, everyMinutes: mine[0].everyMinutes }, { type: 'CLOCK', everyMinutes: 5 });
   assert.ok(e.triggers.includes(other), 'other triggers are kept');
 });
 
@@ -699,4 +699,197 @@ test('e2e: the real buildPayload output in the Inbox lands all six live tabs', (
   assert.deepStrictEqual(e.inbox.fileNames(), []);
   assert.strictEqual(e.inbox.files.length, files.length);
   assert.ok(e.inbox.files.every((f) => f.trashed));
+});
+
+// ---- Final review fixes: R56 stalled runs, R57 young manifests, SUPERSEDED wording, late failed manifests ----
+
+// A hard kill (Apps Script's 6-minute limit) ends an execution without any catch block or later code running.
+// Simulated by a marker error that passes through pullUnexpected_ untouched: no RETRY row, no continuation trigger,
+// nothing persisted after the point of the kill.
+const KILL = 'HARD_KILL (simulated 6-minute kill)';
+function hardKills(e) {
+  const real = e.context.pullUnexpected_;
+  e.context.pullUnexpected_ = (err, current) => {
+    if (err && err.message === KILL) throw err;
+    return real(err, current);
+  };
+}
+const kill = () => {
+  throw new Error(KILL);
+};
+const progress = (e) => (e.stored.PULL_PROGRESS === undefined ? undefined : JSON.parse(e.stored.PULL_PROGRESS));
+
+test('R56: a run whose polls are hard-killed before anything is staged fails after 3 polls without progress', () => {
+  const e = env();
+  hardKills(e);
+  const live = e.ss.seed('Components', [COMP.headers, ['OLD', 'old', 1, true, 1]]);
+  drop(e, payload(RUN).files);
+  e.context.stageRows_ = kill;
+  for (let i = 1; i <= 3; i++) {
+    assert.throws(() => e.context.pollInbox(), /HARD_KILL/, `poll ${i}`);
+    assert.deepStrictEqual(progress(e), { runId: RUN, polls: i, stagedTotal: 0 }, 'persisted before any work');
+  }
+  assert.deepStrictEqual(e.poll(), { status: 'failed', runId: RUN, error: 'no progress after 3 polls' });
+  const rows = entries(e);
+  assert.ok(rows.length > 0);
+  assert.deepStrictEqual([...new Set(rows.map((r) => [r[0], r[6], r[7]].join('|')))], [`${RUN}|FAILED|no progress after 3 polls`], 'no RETRY rows');
+  assert.deepStrictEqual(live.data(), [COMP.headers, ['OLD', 'old', 1, true, 1]], 'live tabs untouched');
+  assert.deepStrictEqual(stagingTabs(e), []);
+  assert.strictEqual(e.stored.ACTIVE_RUN, undefined);
+  assert.strictEqual(e.stored.LAST_PROCESSED_RUN, RUN);
+  assert.strictEqual(e.stored.PULL_PROGRESS, undefined, 'cleared when the run ends');
+  assert.deepStrictEqual(e.inbox.fileNames(), []);
+  assert.deepStrictEqual(e.poll(), { status: 'idle' });
+});
+
+test('R56: a run whose commit is hard-killed on every poll fails after 3 commit-only polls', () => {
+  const e = env();
+  hardKills(e);
+  sliceCost(e, 160000); // poll 1 stages everything but is too late to start the commit
+  drop(e, payload(RUN, { components: COMP_ROWS }).files);
+  assert.deepStrictEqual(e.poll(), { status: 'staging', runId: RUN });
+  assert.deepStrictEqual(progress(e), { runId: RUN, polls: 1, stagedTotal: 0 });
+  e.context.commitRun_ = kill;
+  for (let i = 1; i <= 3; i++) {
+    assert.throws(() => e.context.pollInbox(), /HARD_KILL/, `commit poll ${i}`);
+    assert.deepStrictEqual(progress(e), { runId: RUN, polls: i, stagedTotal: 3 }, 'a commit-only poll is no progress');
+  }
+  assert.deepStrictEqual(e.poll(), { status: 'failed', runId: RUN, error: 'no progress after 3 polls' });
+  assert.strictEqual(e.ss.getSheetByName('Components'), null, 'never swapped');
+  assert.deepStrictEqual(stagingTabs(e), []);
+  assert.deepStrictEqual([...new Set(entries(e).map((r) => r[6]))], ['FAILED']);
+  assert.strictEqual(e.stored.LAST_PROCESSED_RUN, RUN);
+  assert.deepStrictEqual(e.inbox.fileNames(), []);
+});
+
+test('R56: polls that are hard-killed but stage rows each time are not stalled; the run commits', () => {
+  const e = env();
+  hardKills(e);
+  e.context.MASTERDATA_CONFIG.PULL_SLICE_ROWS = 1;
+  const real = e.context.stageRows_;
+  e.context.stageRows_ = (...args) => {
+    real(...args);
+    throw new Error(KILL); // killed right after each slice
+  };
+  drop(e, payload(RUN).files);
+  for (let i = 0; i < 4; i++) assert.throws(() => e.context.pollInbox(), /HARD_KILL/);
+  assert.deepStrictEqual(progress(e), { runId: RUN, polls: 1, stagedTotal: 3 });
+  assert.deepStrictEqual(e.poll(), { status: 'committed', runId: RUN }, 'a commit-only poll that commits ends the run');
+  assert.deepStrictEqual(e.ss.getSheetByName('Components').data(), [COMP.headers, ...sheetRows(COMP_ROWS)]);
+  assert.deepStrictEqual(e.ss.getSheetByName('Products').data(), [PROD.headers, ...PROD_ROWS]);
+  assert.deepStrictEqual(entries(e).map((r) => r[6]), Array(6).fill('OK'));
+  assert.strictEqual(e.stored.PULL_PROGRESS, undefined);
+});
+
+test('R56: a run committed by a poll killed before LAST_PROCESSED_RUN was set is finished, not restaged or failed', () => {
+  const e = env();
+  hardKills(e);
+  const begins = countBegins(e);
+  drop(e, payload(RUN).files);
+  const real = e.context.commitRun_;
+  e.context.commitRun_ = (req, retryable) => {
+    real(req, retryable);
+    throw new Error(KILL); // killed right after the commit
+  };
+  assert.throws(() => e.context.pollInbox(), /HARD_KILL/);
+  e.context.commitRun_ = real;
+  assert.strictEqual(e.stored.LAST_PROCESSED_RUN, undefined);
+  assert.strictEqual(e.stored.LAST_COMMITTED_RUN, RUN);
+  const writes = stagingWrites(e);
+  for (let i = 0; i < 4; i++) {
+    assert.deepStrictEqual(e.poll(), i === 0 ? { status: 'committed', runId: RUN } : { status: 'idle' });
+  }
+  assert.strictEqual(begins.n, 1, 'not begun again');
+  assert.deepStrictEqual(stagingWrites(e), writes, 'not restaged');
+  assert.deepStrictEqual(entries(e).map((r) => r[6]), Array(6).fill('OK'), 'no second OK, no FAILED');
+  assert.strictEqual(e.stored.LAST_PROCESSED_RUN, RUN);
+  assert.strictEqual(e.stored.PULL_PROGRESS, undefined);
+  assert.deepStrictEqual(e.inbox.fileNames(), []);
+});
+
+test('R57: a manifest younger than 2 minutes is left for a later poll (Drive listing lag)', () => {
+  const e = env();
+  assert.strictEqual(e.context.MASTERDATA_CONFIG.INBOX_MIN_AGE_MS, 120000);
+  drop(e, payload(RUN).files, { created: new Date(NOW - 60000) });
+  assert.deepStrictEqual(e.poll(), { status: 'waiting', runId: RUN });
+  assert.deepStrictEqual(e.ss.names(), []);
+  assert.strictEqual(e.inbox.fileNames().length, 7);
+  assert.strictEqual(e.stored.PULL_PROGRESS, undefined, 'a skipped poll does not count toward R56');
+  assert.deepStrictEqual(oneOffTriggers(e), []);
+  e.clock.t = NOW + 60000; // now 2 minutes old
+  assert.deepStrictEqual(e.poll(), { status: 'committed', runId: RUN });
+});
+
+test('R57: a young manifest of the oldest pending run is not skipped over by a newer run', () => {
+  const e = env();
+  drop(e, payload(RUN).files, { created: new Date(NOW - 30000) });
+  drop(e, payload(RUN2).files, { created: new Date(NOW - HOUR) });
+  assert.deepStrictEqual(e.poll(), { status: 'waiting', runId: RUN });
+  assert.strictEqual(e.stored.LAST_PROCESSED_RUN, undefined);
+  assert.strictEqual(e.inbox.fileNames().length, 14);
+});
+
+test('item 6: SUPERSEDED is logged once, only after every file of the older run is trashed (manifest last)', () => {
+  const e = env({ props: { LAST_PROCESSED_RUN: RUN2 } });
+  drop(e, payload(RUN).files);
+  let failing = true;
+  e.drive.failTrash = (file) => {
+    if (failing && file.name === `${RUN}__products.json.gz`) throw new Error('no permission');
+  };
+  for (let i = 0; i < 2; i++) {
+    assert.deepStrictEqual(e.poll(), { status: 'idle' });
+    assert.deepStrictEqual(entries(e), [], 'not logged while files remain');
+    assert.deepStrictEqual(e.inbox.fileNames(), [`${RUN}__manifest.json`, `${RUN}__products.json.gz`], 'the manifest stays until its data files are gone');
+  }
+  failing = false;
+  assert.deepStrictEqual(e.poll(), { status: 'idle' });
+  assert.deepStrictEqual(e.inbox.fileNames(), []);
+  assert.deepStrictEqual(e.poll(), { status: 'idle' });
+  assert.deepStrictEqual(entries(e).map((r) => [r[0], r[6], r[7]]), [[RUN, 'SUPERSEDED', `older run superseded by ${RUN2}; files trashed`]]);
+});
+
+test('item 6: leftovers of a committed run keep their manifest, so they are trashed later without INCOMPLETE or SUPERSEDED', () => {
+  const e = env();
+  drop(e, payload(RUN).files);
+  let failing = true;
+  e.drive.failTrash = (file) => {
+    if (failing && file.name === `${RUN}__products.json.gz`) throw new Error('no permission');
+  };
+  assert.deepStrictEqual(e.poll(), { status: 'committed', runId: RUN });
+  assert.deepStrictEqual(e.inbox.fileNames(), [`${RUN}__manifest.json`, `${RUN}__products.json.gz`]);
+  failing = false;
+  e.clock.t = NOW + 4 * DAY;
+  assert.deepStrictEqual(e.poll(), { status: 'idle' });
+  assert.deepStrictEqual(e.inbox.fileNames(), []);
+  assert.deepStrictEqual(entries(e).map((r) => r[6]), Array(6).fill('OK'));
+});
+
+test('item 12: a late failed manifest for a committed run writes one INFO row; live data stays', () => {
+  const e = env();
+  drop(e, payload(RUN).files);
+  assert.deepStrictEqual(e.poll(), { status: 'committed', runId: RUN });
+  const late = payload(RUN, {}, { status: 'failed', reason: 'upload failed: HTTP 503' });
+  drop(e, late.files);
+  assert.deepStrictEqual(e.poll(), { status: 'idle' });
+  const rows = entries(e);
+  assert.deepStrictEqual([rows[0][0], rows[0][1], rows[0][6], rows[0][7]],
+    [RUN, berlin(STARTED), 'INFO', 'cloud run reported failure after data was committed: upload failed: HTTP 503']);
+  assert.deepStrictEqual(rows.slice(1).map((r) => r[6]), Array(6).fill('OK'));
+  assert.deepStrictEqual(e.ss.getSheetByName('Components').data(), [COMP.headers, ...sheetRows(COMP_ROWS)]);
+  assert.deepStrictEqual(e.inbox.fileNames(), []);
+  // The same failed manifest again (a create retry): not logged a second time.
+  drop(e, late.files);
+  assert.deepStrictEqual(e.poll(), { status: 'idle' });
+  assert.strictEqual(entries(e).length, 7);
+  assert.deepStrictEqual(e.inbox.fileNames(), []);
+});
+
+test('item 12: a late failed manifest for a run that already failed is trashed without a log row', () => {
+  const e = env();
+  drop(e, payload(RUN, {}, { status: 'failed', reason: 'first' }).files);
+  assert.strictEqual(e.poll().status, 'failed');
+  drop(e, payload(RUN, {}, { status: 'failed', reason: 'second' }).files);
+  assert.deepStrictEqual(e.poll(), { status: 'idle' });
+  assert.deepStrictEqual(entries(e).map((r) => [r[6], r[7]]), [['FAILED', 'first']]);
+  assert.deepStrictEqual(e.inbox.fileNames(), []);
 });

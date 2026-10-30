@@ -1,4 +1,4 @@
-// Drive Inbox puller: time-driven every 15 minutes. Plain JavaScript syntax so Node vm can load this file in tests.
+// Drive Inbox puller: time-driven every 5 minutes (R54). Plain JavaScript syntax so Node vm can load this file in tests.
 //
 // Inbox contract (refresh/lib/inbox.mjs buildPayload): per run, <runId>__<feed>.json.gz (gzip of the JSON rows)
 // for every feed, then <runId>__manifest.json last. A run is pulled through the same begin -> chunk -> commit
@@ -68,16 +68,34 @@ function trashQuietly_(file) {
   }
 }
 
-// Trashes every live Inbox file named <runId>__*. Best effort (it runs after the run was logged):
+function isManifestFile_(file) {
+  var m = INBOX_NAME_RE_.exec(file.getName());
+  return !!m && m[2] === INBOX_MANIFEST_;
+}
+
+// Trashes a run's files: data files first, its manifests only once every data file is gone, so a run is never left
+// with data files but no manifest (they would later be logged INCOMPLETE). Returns true when every file was trashed.
+function trashManifestLast_(files) {
+  var data = files.filter(function (f) {
+    return !isManifestFile_(f);
+  });
+  var manifests = files.filter(isManifestFile_);
+  if (data.filter(trashQuietly_).length < data.length) return false;
+  return manifests.filter(trashQuietly_).length === manifests.length;
+}
+
+// Trashes every live Inbox file named <runId>__* (manifest last). Best effort (it runs after the run was logged):
 // leftovers of a processed run are trashed by a later poll.
 function trashRunFiles_(runId) {
   var prefix = runId + '__';
   try {
+    var files = [];
     var it = inboxFolder_().getFiles();
     while (it.hasNext()) {
       var file = it.next();
-      if (!file.isTrashed() && file.getName().indexOf(prefix) === 0) trashQuietly_(file);
+      if (!file.isTrashed() && file.getName().indexOf(prefix) === 0) files.push(file);
     }
+    trashManifestLast_(files);
   } catch (err) {
     console.log('pollInbox: cannot trash the files of ' + runId + ': ' + errorMessage_(err));
   }
@@ -106,14 +124,90 @@ function trashOrphans_(inbox, nowMs) {
     });
 }
 
-// Manifests up to LAST_PROCESSED_RUN are not processed again; their files are trashed. An older run that
-// was never processed (a newer one already was) is logged SUPERSEDED.
+// Manifests up to LAST_PROCESSED_RUN are not processed again; their files are trashed (manifest last). An older run
+// is logged SUPERSEDED once all its files are trashed (it is then gone from the Inbox, so the row is written once).
+// The last committed run is never SUPERSEDED; a late failed manifest for it is logged INFO instead.
 function trashProcessedRuns_(inbox, ids, last) {
+  var committed = scriptProps_().getProperty(MASTERDATA_CONFIG.LAST_COMMITTED_RUN_PROPERTY);
   ids.forEach(function (id) {
     if (id > last) return;
-    inbox.runs[id].files.forEach(trashQuietly_);
-    if (id < last) inboxLog_(id, '', 'SUPERSEDED', 'not processed: the newer run ' + last + ' was already processed; files trashed');
+    var entry = inbox.runs[id];
+    if (id === committed && !reportLateFailure_(entry)) return; // files kept so the INFO row is not lost
+    if (trashManifestLast_(entry.files) && id < last && id !== committed) {
+      inboxLog_(id, '', 'SUPERSEDED', 'older run superseded by ' + last + '; files trashed');
+    }
   });
+}
+
+function failedReason_(m) {
+  return m.reason === undefined || m.reason === null ? 'failed' : String(m.reason);
+}
+
+// A failed manifest for a run whose data was already committed (e.g. the cloud run saw an upload error after its
+// ready manifest had landed) is logged INFO once (LAST_LATE_FAILURE_RUN); the live data stays. Returns false only
+// when that row could not be written, so the caller keeps the files for the next poll.
+function reportLateFailure_(entry) {
+  var props = scriptProps_();
+  var key = MASTERDATA_CONFIG.LAST_LATE_FAILURE_RUN_PROPERTY;
+  try {
+    if (props.getProperty(key) === entry.runId) return true;
+    var m = readInboxManifest_(entry).manifest;
+    if (!m || m.status !== 'failed') return true;
+    var startedAt = typeof m.startedAt === 'string' ? m.startedAt : '';
+    inboxLog_(entry.runId, startedAt, 'INFO', 'cloud run reported failure after data was committed: ' + failedReason_(m));
+  } catch (err) {
+    console.log('pollInbox: cannot report the late failure of ' + entry.runId + ': ' + errorMessage_(err));
+    return false;
+  }
+  try {
+    props.setProperty(key, entry.runId);
+  } catch (err) {
+    console.log('pollInbox: cannot set LAST_LATE_FAILURE_RUN: ' + errorMessage_(err));
+  }
+  return true;
+}
+
+// R57: true when a manifest of the run is younger than INBOX_MIN_AGE_MS. Drive listings can lag behind uploads, so its
+// data files may not be listed yet; the run is left for a later poll.
+function youngManifest_(entry, nowMs) {
+  return entry.manifests.some(function (file) {
+    try {
+      return nowMs - file.getDateCreated().getTime() < MASTERDATA_CONFIG.INBOX_MIN_AGE_MS;
+    } catch (err) {
+      console.log('pollInbox: cannot check ' + file.getName() + ': ' + errorMessage_(err));
+      return false;
+    }
+  });
+}
+
+// R56: called at the start of every poll that works on runId, before any work (Apps Script can kill a poll at
+// 6 minutes without running any later code). Persists {runId, polls, stagedTotal}, where polls counts the polls that
+// started at the same staged total (the high-water mark). Returns true when PULL_STALL_POLLS polls in a row did not
+// grow it: each may have been killed while reading, staging or committing (a commit-only poll is progress only by
+// ending the run).
+function stalledRun_(runId) {
+  var key = MASTERDATA_CONFIG.PULL_PROGRESS_PROPERTY;
+  var run = getActiveRun_();
+  var staged = 0;
+  if (run && run.runId === runId) {
+    run.feeds.forEach(function (f) {
+      staged += f.staged;
+    });
+  }
+  var prev = getJsonProperty_(key);
+  var same = !!prev && prev.runId === runId && staged <= prev.stagedTotal;
+  var polls = same ? prev.polls + 1 : 1;
+  if (polls > MASTERDATA_CONFIG.PULL_STALL_POLLS) return true;
+  setJsonProperty_(key, { runId: runId, polls: polls, stagedTotal: same ? prev.stagedTotal : staged });
+  return false;
+}
+
+function clearProgress_() {
+  try {
+    scriptProps_().deleteProperty(MASTERDATA_CONFIG.PULL_PROGRESS_PROPERTY);
+  } catch (err) {
+    console.log('pollInbox: cannot clear PULL_PROGRESS: ' + errorMessage_(err));
+  }
 }
 
 // Largest runId accepted at nowMs: one day ahead of Berlin wall-clock time.
@@ -238,6 +332,7 @@ function failInboxRun_(runId, reason, startedAt) {
   }
   setLastProcessedRun_(runId);
   clearRetries_();
+  clearProgress_();
   trashRunFiles_(runId);
   return { status: 'failed', runId: runId, error: reason };
 }
@@ -249,6 +344,7 @@ function endInboxRun_(current, res) {
   if (!res.ok && res.error === notActiveRun_().error) inboxLog_(runId, current.startedAt, 'FAILED', res.error);
   setLastProcessedRun_(runId);
   clearRetries_();
+  clearProgress_();
   trashRunFiles_(runId);
   if (!res.ok) return { status: 'failed', runId: runId, error: res.error };
   if (res.warning) return { status: 'committed', runId: runId, warning: res.warning };
@@ -270,9 +366,7 @@ function processInboxRun_(entry, startMs, current) {
   if (read.error) return failInboxRun_(runId, read.error, null);
   var m = read.manifest;
   current.startedAt = m && typeof m.startedAt === 'string' ? m.startedAt : null;
-  if (m && m.status === 'failed') {
-    return failInboxRun_(runId, m.reason === undefined || m.reason === null ? 'failed' : String(m.reason), current.startedAt);
-  }
+  if (m && m.status === 'failed') return failInboxRun_(runId, failedReason_(m), current.startedAt);
   var invalid = checkReadyManifest_(m, runId);
   if (invalid) return failInboxRun_(runId, invalid, current.startedAt);
 
@@ -341,7 +435,7 @@ function futureInboxRun_(runId) {
 }
 
 // R51: one-off pollInbox triggers created by earlier polls (their ids are kept in a Script Property).
-// Deleted under the lock: this poll does the pending work, and the 15-minute trigger is never touched.
+// Deleted under the lock: this poll does the pending work, and the 5-minute trigger is never touched.
 function deleteContinuationTriggers_() {
   try {
     var key = MASTERDATA_CONFIG.PULL_CONTINUATION_PROPERTY;
@@ -356,7 +450,7 @@ function deleteContinuationTriggers_() {
   }
 }
 
-// R51: a poll that stopped for time continues in PULL_CONTINUATION_DELAY_MS instead of 15 minutes.
+// R51: a poll that stopped for time continues in PULL_CONTINUATION_DELAY_MS instead of at the next 5-minute poll.
 function scheduleContinuation_() {
   try {
     var key = MASTERDATA_CONFIG.PULL_CONTINUATION_PROPERTY;
@@ -370,7 +464,7 @@ function scheduleContinuation_() {
   }
 }
 
-// One poll under the script lock. Returns {status: 'idle' | 'staging' | 'committed' | 'retry' | 'failed' | 'error', ...}.
+// One poll under the script lock. Returns {status: 'idle' | 'waiting' | 'staging' | 'committed' | 'retry' | 'failed' | 'error', ...}.
 function pollInboxLocked_(startMs) {
   var current = { runId: null, startedAt: null };
   var out;
@@ -409,10 +503,30 @@ function pollInboxRun_(startMs, current) {
   if (!pending.length) return { status: 'idle' };
   var runId = pending[0];
   if (runId > maxRunId_(startMs)) return futureInboxRun_(runId);
+  // R57: the oldest pending run waits; a newer run is never processed ahead of it.
+  if (youngManifest_(inbox.runs[runId], startMs)) return { status: 'waiting', runId: runId };
   current.runId = runId;
+  if (runId === scriptProps_().getProperty(MASTERDATA_CONFIG.LAST_COMMITTED_RUN_PROPERTY)) {
+    return finishCommittedRun_(inbox.runs[runId]);
+  }
+  if (stalledRun_(runId)) return failInboxRun_(runId, 'no progress after ' + MASTERDATA_CONFIG.PULL_STALL_POLLS + ' polls', null);
   var out = processInboxRun_(inbox.runs[runId], startMs, current);
   if (out.status === 'staging') scheduleContinuation_();
   return out;
+}
+
+// A run whose commit succeeded (LAST_COMMITTED_RUN) in a poll that was killed before LAST_PROCESSED_RUN was set:
+// only the bookkeeping is left. It is never staged, committed or failed again.
+function finishCommittedRun_(entry) {
+  var runId = entry.runId;
+  var run = getActiveRun_();
+  if (run && run.runId === runId) clearActiveRun_();
+  var reported = reportLateFailure_(entry);
+  setLastProcessedRun_(runId);
+  clearRetries_();
+  clearProgress_();
+  if (reported) trashRunFiles_(runId); // else trashProcessedRuns_ retries the INFO row on the next poll
+  return { status: 'committed', runId: runId };
 }
 
 // R48: an unexpected error of a run is retried on later polls: attempts 1 .. PULL_MAX_ATTEMPTS-1 log a RETRY

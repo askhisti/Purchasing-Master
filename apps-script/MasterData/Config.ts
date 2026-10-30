@@ -26,7 +26,8 @@ var MASTERDATA_CONFIG = {
   // <runId>__<feed>.json.gz files and <runId>__manifest.json last; pollInbox pulls them.
   INBOX_FOLDER_ID: '1PE6IcZqJFHM7ISA4XKNHpifk8oCVyqdV',
   PULL_HANDLER: 'pollInbox',
-  PULL_EVERY_MINUTES: 15,
+  // R54: every 5 minutes (a busy or idle poll exits within seconds).
+  PULL_EVERY_MINUTES: 5,
   // tryLock wait; a busy lock means another execution is working, so the poll exits.
   PULL_LOCK_WAIT_MS: 5000,
   // Rows per staging write, and the time after which a poll stops (Apps Script kills executions at 6 min).
@@ -41,10 +42,21 @@ var MASTERDATA_CONFIG = {
   // R48: unexpected errors of a run are retried on later polls; the last attempt fails the run.
   PULL_MAX_ATTEMPTS: 3,
   PULL_RETRY_PROPERTY: 'PULL_RETRY',
+  // R56: {runId, polls, stagedTotal}, persisted at the start of every poll that works on a run (before any work, so a
+  // poll hard-killed at 6 minutes still counts). A run whose staged total has not grown for PULL_STALL_POLLS polls in a
+  // row is failed ('no progress after 3 polls').
+  PULL_PROGRESS_PROPERTY: 'PULL_PROGRESS',
+  PULL_STALL_POLLS: 3,
+  // runId of the last run whose swap into the live tabs completed (set by the commit itself).
+  LAST_COMMITTED_RUN_PROPERTY: 'LAST_COMMITTED_RUN',
+  // Last committed runId whose late failed manifest was logged INFO (logged once).
+  LAST_LATE_FAILURE_RUN_PROPERTY: 'LAST_LATE_FAILURE_RUN',
   // Last runId logged as 'runId is in the future' (logged once).
   LAST_FUTURE_RUN_PROPERTY: 'LAST_FUTURE_RUN',
   // Inbox files that belong to no manifest are trashed once older than this.
   INBOX_ORPHAN_DAYS: 3,
+  // R57: a manifest younger than this is left for a later poll (Drive listings can lag behind uploads).
+  INBOX_MIN_AGE_MS: 120000,
   // runId of the last Inbox run that ended (committed or failed); runIds up to it are never processed again.
   LAST_PROCESSED_RUN_PROPERTY: 'LAST_PROCESSED_RUN',
   // Last error logged for a poll that failed outside any run, so a lasting problem is logged once.

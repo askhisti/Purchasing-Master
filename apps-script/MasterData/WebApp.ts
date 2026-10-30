@@ -190,6 +190,10 @@ function commitRun_(req, retryable) {
       warnings.push(label + ': ' + errorMessage_(e));
     }
   };
+  // First, so a puller execution killed right after the swap is recognised as committed (never staged again).
+  step('committed run', function () {
+    PropertiesService.getScriptProperties().setProperty(MASTERDATA_CONFIG.LAST_COMMITTED_RUN_PROPERTY, run.runId);
+  });
   step('clear active run', clearActiveRun_);
   step('snapshot', function () {
     run.feeds.forEach(function (f) {

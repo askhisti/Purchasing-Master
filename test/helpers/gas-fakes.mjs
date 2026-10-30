@@ -234,7 +234,11 @@ class FakeFile {
     if (this.folder.drive.failBlob) this.folder.drive.failBlob(this);
     return makeBlob(Buffer.isBuffer(this.content) ? Buffer.from(this.content) : Buffer.from(this.content, 'utf8'), this.mimeType);
   }
-  setTrashed(t) { this.trashed = t; return this; }
+  setTrashed(t) {
+    if (this.folder.drive.failTrash) this.folder.drive.failTrash(this); // test hook: simulate a Drive error
+    this.trashed = t;
+    return this;
+  }
   isTrashed() { return this.trashed; }
 }
 
