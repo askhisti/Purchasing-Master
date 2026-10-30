@@ -1,0 +1,292 @@
+// In-memory fakes of the Apps Script services used by apps-script/MasterData.
+// Each fake encodes an assumption about real Apps Script behaviour; see task-8-report.md.
+import fs from 'node:fs';
+import path from 'node:path';
+import vm from 'node:vm';
+import zlib from 'node:zlib';
+
+const DEFAULT_ROWS = 1000;
+const DEFAULT_COLS = 26;
+
+class FakeRange {
+  constructor(sheet, row, col, numRows, numCols) {
+    Object.assign(this, { sheet, row, col, numRows, numCols });
+  }
+  checkShape(values, what) {
+    if (!Array.isArray(values) || values.length !== this.numRows || values.some((r) => !Array.isArray(r) || r.length !== this.numCols)) {
+      throw new Error(`${what}: data does not match range ${this.numRows}x${this.numCols}`);
+    }
+  }
+  setValues(values) {
+    this.checkShape(values, 'setValues');
+    this.sheet.ss.calls.push({ op: 'setValues', sheet: this.sheet.name, row: this.row, col: this.col, numRows: this.numRows, numCols: this.numCols });
+    values.forEach((r, i) => r.forEach((v, j) => this.sheet.setCell(this.row + i, this.col + j, v)));
+    return this;
+  }
+  setValue(v) { return this.setValues([[v]]); }
+  getValues() {
+    const out = [];
+    for (let i = 0; i < this.numRows; i++) {
+      const r = [];
+      for (let j = 0; j < this.numCols; j++) r.push(this.sheet.getCell(this.row + i, this.col + j));
+      out.push(r);
+    }
+    return out;
+  }
+  getValue() { return this.getValues()[0][0]; }
+  setNumberFormats(formats) {
+    this.checkShape(formats, 'setNumberFormats');
+    this.sheet.ss.calls.push({
+      op: 'setNumberFormats', sheet: this.sheet.name, row: this.row, col: this.col, numRows: this.numRows, numCols: this.numCols,
+      formats: Array.from(formats, (r) => [...r]), // copy out of the vm realm
+    });
+    formats.forEach((r, i) => r.forEach((f, j) => { this.sheet.formats[`${this.row + i},${this.col + j}`] = f; }));
+    return this;
+  }
+  setNumberFormat(f) { return this.setNumberFormats(Array.from({ length: this.numRows }, () => Array(this.numCols).fill(f))); }
+}
+
+class FakeSheet {
+  constructor(ss, name) {
+    this.ss = ss;
+    this.name = name;
+    this.hidden = false;
+    this.rows = []; // rows[r-1][c-1]
+    this.formats = {};
+    this.maxRows = DEFAULT_ROWS;
+    this.maxCols = DEFAULT_COLS;
+  }
+  getName() { return this.name; }
+  setName(n) {
+    if (this.ss.sheets.some((s) => s !== this && s.name === n)) throw new Error(`A sheet with the name "${n}" already exists.`);
+    this.name = n;
+    return this;
+  }
+  hideSheet() {
+    if (this.ss.sheets.filter((s) => !s.hidden && s !== this).length === 0) throw new Error("You can't hide all the sheets in a document.");
+    this.hidden = true;
+    return this;
+  }
+  showSheet() { this.hidden = false; return this; }
+  isSheetHidden() { return this.hidden; }
+  getMaxRows() { return this.maxRows; }
+  getMaxColumns() { return this.maxCols; }
+  insertRowsAfter(after, n) {
+    if (after < 1 || after > this.maxRows) throw new Error('insertRowsAfter: position out of range');
+    this.rows.splice(after, 0, ...Array.from({ length: n }, () => undefined));
+    this.maxRows += n;
+    return this;
+  }
+  insertRowsBefore(before, n) {
+    if (before < 1 || before > this.maxRows) throw new Error('insertRowsBefore: position out of range');
+    this.rows.splice(before - 1, 0, ...Array.from({ length: n }, () => undefined));
+    this.maxRows += n;
+    return this;
+  }
+  insertColumnsAfter(after, n) {
+    if (after < 1 || after > this.maxCols) throw new Error('insertColumnsAfter: position out of range');
+    this.maxCols += n; // fakes only append-shape usage
+    return this;
+  }
+  isEmpty(v) { return v === undefined || v === null || v === ''; }
+  getLastRow() {
+    for (let r = this.rows.length; r >= 1; r--) {
+      const row = this.rows[r - 1];
+      if (row && row.some((v) => !this.isEmpty(v))) return r;
+    }
+    return 0;
+  }
+  getLastColumn() {
+    let last = 0;
+    for (const row of this.rows) if (row) row.forEach((v, j) => { if (!this.isEmpty(v)) last = Math.max(last, j + 1); });
+    return last;
+  }
+  getRange(row, col, numRows = 1, numCols = 1) {
+    if (row < 1 || col < 1 || numRows < 1 || numCols < 1 || row + numRows - 1 > this.maxRows || col + numCols - 1 > this.maxCols) {
+      throw new Error('The coordinates of the range are outside the dimensions of the sheet.');
+    }
+    return new FakeRange(this, row, col, numRows, numCols);
+  }
+  getDataRange() {
+    return new FakeRange(this, 1, 1, Math.max(1, this.getLastRow()), Math.max(1, this.getLastColumn()));
+  }
+  setCell(r, c, v) {
+    while (this.rows.length < r) this.rows.push(undefined);
+    if (!this.rows[r - 1]) this.rows[r - 1] = [];
+    this.rows[r - 1][c - 1] = v === null || v === undefined ? '' : v;
+  }
+  getCell(r, c) {
+    const row = this.rows[r - 1];
+    const v = row ? row[c - 1] : undefined;
+    return v === undefined ? '' : v;
+  }
+  // Test helper: the non-empty block as plain arrays.
+  data() { return this.getDataRange().getValues(); }
+}
+
+export class FakeSpreadsheet {
+  constructor() {
+    this.sheets = [];
+    this.active = null;
+    this.calls = [];
+  }
+  getSheets() { return [...this.sheets]; }
+  getSheetByName(n) { return this.sheets.find((s) => s.name === n) || null; }
+  insertSheet(name) {
+    if (this.getSheetByName(name)) throw new Error(`A sheet with the name "${name}" already exists.`);
+    const s = new FakeSheet(this, name);
+    this.sheets.push(s);
+    this.active = s;
+    return s;
+  }
+  deleteSheet(sheet) {
+    if (this.sheets.length === 1) throw new Error("You can't remove all the sheets in a document.");
+    const i = this.sheets.indexOf(sheet);
+    if (i < 0) throw new Error('deleteSheet: unknown sheet');
+    this.sheets.splice(i, 1);
+    if (this.active === sheet) this.active = this.sheets[0];
+  }
+  setActiveSheet(sheet) { this.active = sheet; return sheet; }
+  getActiveSheet() { return this.active; }
+  moveActiveSheet(pos) {
+    const i = this.sheets.indexOf(this.active);
+    this.sheets.splice(i, 1);
+    this.sheets.splice(pos - 1, 0, this.active);
+  }
+  names() { return this.sheets.map((s) => s.name); }
+  // Test helper: seed a sheet with a 2-D block from A1.
+  seed(name, values) {
+    const s = this.insertSheet(name);
+    values.forEach((r, i) => r.forEach((v, j) => s.setCell(i + 1, j + 1, v)));
+    return s;
+  }
+}
+
+class FakeFile {
+  constructor(folder, name, content, mimeType) { Object.assign(this, { folder, name, content, mimeType, trashed: false }); }
+  getName() { return this.name; }
+  getMimeType() { return this.mimeType; }
+  getBlob() { return makeBlob(Buffer.from(this.content, 'utf8'), this.mimeType); }
+  setTrashed(t) { this.trashed = t; return this; }
+  isTrashed() { return this.trashed; }
+}
+
+function iter(items) {
+  let i = 0;
+  return { hasNext: () => i < items.length, next: () => { if (i >= items.length) throw new Error('iterator exhausted'); return items[i++]; } };
+}
+
+export class FakeFolder {
+  constructor(drive, name, id) {
+    Object.assign(this, { drive, name, id, folders: [], files: [], trashed: false });
+    drive.byId[id] = this;
+  }
+  getName() { return this.name; }
+  getId() { return this.id; }
+  setTrashed(t) { this.trashed = t; return this; }
+  isTrashed() { return this.trashed; }
+  liveFolders() { return this.folders.filter((f) => !f.trashed); }
+  liveFiles() { return this.files.filter((f) => !f.trashed); }
+  // Worst case of real DriveApp: iterators also return trashed items (callers must check isTrashed()).
+  getFolders() { return iter([...this.folders]); }
+  getFoldersByName(n) { return iter(this.folders.filter((f) => f.name === n)); }
+  createFolder(n) {
+    const f = new FakeFolder(this.drive, n, `folder-${++this.drive.seq}`);
+    this.folders.push(f);
+    return f;
+  }
+  getFiles() { return iter([...this.files]); }
+  getFilesByName(n) { return iter(this.files.filter((f) => f.name === n)); }
+  createFile(name, content, mimeType) {
+    if (typeof content !== 'string') throw new Error('createFile: content must be a string in this fake');
+    const f = new FakeFile(this, name, content, mimeType || 'text/plain');
+    this.files.push(f);
+    return f;
+  }
+  // Test helpers
+  folder(n) { return this.liveFolders().find((f) => f.name === n) || null; }
+  fileNames() { return this.liveFiles().map((f) => f.name).sort(); }
+  file(n) { return this.liveFiles().find((f) => f.name === n) || null; }
+}
+
+export class FakeDrive {
+  constructor(rootId) {
+    this.byId = {};
+    this.seq = 0;
+    this.root = new FakeFolder(this, '03_Master File from Snowflake', rootId);
+  }
+  getFolderById(id) {
+    const f = this.byId[id];
+    if (!f) throw new Error(`No item with the given ID could be found: ${id}`);
+    return f;
+  }
+}
+
+function makeBlob(buf, contentType) {
+  return {
+    buf,
+    getBytes: () => Array.from(buf, (b) => (b > 127 ? b - 256 : b)), // Java signed bytes
+    getDataAsString: (charset) => buf.toString(charset && /^utf-?8$/i.test(charset) ? 'utf8' : 'utf8'),
+    getContentType: () => contentType,
+    setContentType(t) { contentType = t; return this; },
+  };
+}
+
+const toBuffer = (bytes) => Buffer.from(Array.from(bytes, (b) => b & 255));
+
+export const FakeUtilities = {
+  base64Decode: (s) => Array.from(Buffer.from(s, 'base64'), (b) => (b > 127 ? b - 256 : b)),
+  base64Encode: (bytes) => (typeof bytes === 'string' ? Buffer.from(bytes, 'utf8') : toBuffer(bytes)).toString('base64'),
+  newBlob: (data, contentType) => makeBlob(typeof data === 'string' ? Buffer.from(data, 'utf8') : toBuffer(data), contentType || null),
+  gzip: (blob) => makeBlob(zlib.gzipSync(blob.buf), 'application/x-gzip'),
+  ungzip: (blob) => {
+    if (blob.getContentType() !== 'application/x-gzip') throw new Error('ungzip: blob is not application/x-gzip');
+    return makeBlob(zlib.gunzipSync(blob.buf), null);
+  },
+};
+
+export function encodeRows(rows) {
+  return zlib.gzipSync(Buffer.from(JSON.stringify(rows), 'utf8')).toString('base64');
+}
+
+export function makeEnv({ props = {}, rootId = '1lP59mBX1dM24emOJlussSvMPbkBiTTUk' } = {}) {
+  const stored = { ...props };
+  const ss = new FakeSpreadsheet();
+  const drive = new FakeDrive(rootId);
+  const lockLog = [];
+  const context = {
+    console,
+    PropertiesService: {
+      getScriptProperties: () => ({
+        getProperty: (k) => (k in stored ? stored[k] : null),
+        setProperty: (k, v) => { stored[k] = String(v); },
+        deleteProperty: (k) => { delete stored[k]; },
+      }),
+    },
+    ContentService: {
+      MimeType: { JSON: 'JSON' },
+      createTextOutput: (s) => ({ text: s, setMimeType() { return this; }, getContent() { return s; } }),
+    },
+    LockService: {
+      getScriptLock: () => ({
+        waitLock: (ms) => { lockLog.push(['wait', ms]); },
+        releaseLock: () => { lockLog.push(['release']); },
+      }),
+    },
+    SpreadsheetApp: { getActiveSpreadsheet: () => ss },
+    DriveApp: { getFolderById: (id) => drive.getFolderById(id) },
+    Utilities: FakeUtilities,
+    Logger: { log() {} },
+  };
+  vm.createContext(context);
+  const dir = path.join(process.cwd(), 'apps-script', 'MasterData');
+  for (const f of fs.readdirSync(dir).filter((n) => n.endsWith('.ts')).sort((a, b) => (a === 'Config.ts' ? -1 : b === 'Config.ts' ? 1 : a.localeCompare(b)))) {
+    const p = path.join(dir, f);
+    vm.runInContext(fs.readFileSync(p, 'utf8'), context, { filename: p });
+  }
+  const post = (body) => {
+    const out = context.doPost({ postData: { contents: JSON.stringify(body) } });
+    return JSON.parse(out.getContent());
+  };
+  return { context, stored, ss, drive, lockLog, post };
+}
