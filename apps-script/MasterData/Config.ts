@@ -20,6 +20,8 @@ var MASTERDATA_CONFIG = {
   // R43: daily at 08:15 Berlin (nearMinute: Apps Script runs it within +-15 minutes).
   WATCHDOG_HOUR: 8,
   WATCHDOG_MINUTE: 15,
+  // R49: the watchdog waits for a running puller execution (up to its 6-minute limit) instead of 30 s.
+  WATCHDOG_LOCK_TIMEOUT_MS: 330000,
   // Drive Inbox (03_Master File from Snowflake/Inbox, shared drive): the nightly run uploads
   // <runId>__<feed>.json.gz files and <runId>__manifest.json last; pollInbox pulls them.
   INBOX_FOLDER_ID: '1PE6IcZqJFHM7ISA4XKNHpifk8oCVyqdV',
@@ -28,8 +30,19 @@ var MASTERDATA_CONFIG = {
   // tryLock wait; a busy lock means another execution is working, so the poll exits.
   PULL_LOCK_WAIT_MS: 5000,
   // Rows per staging write, and the time after which a poll stops (Apps Script kills executions at 6 min).
+  // A slice is not started when elapsed + the previous slice's duration would pass the budget.
   PULL_SLICE_ROWS: 4000,
   PULL_BUDGET_MS: 270000,
+  // The commit (snapshots + swap) only starts this early in a poll, so it never runs into the 6-minute kill.
+  PULL_COMMIT_START_MAX_MS: 150000,
+  // R51: a poll that stops early schedules a one-off pollInbox this long after it.
+  PULL_CONTINUATION_DELAY_MS: 60000,
+  PULL_CONTINUATION_PROPERTY: 'PULL_CONTINUATION_TRIGGERS',
+  // R48: unexpected errors of a run are retried on later polls; the last attempt fails the run.
+  PULL_MAX_ATTEMPTS: 3,
+  PULL_RETRY_PROPERTY: 'PULL_RETRY',
+  // Last runId logged as 'runId is in the future' (logged once).
+  LAST_FUTURE_RUN_PROPERTY: 'LAST_FUTURE_RUN',
   // Inbox files that belong to no manifest are trashed once older than this.
   INBOX_ORPHAN_DAYS: 3,
   // runId of the last Inbox run that ended (committed or failed); runIds up to it are never processed again.

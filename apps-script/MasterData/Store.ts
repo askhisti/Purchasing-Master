@@ -108,9 +108,19 @@ function savePart_(date, feed, seq, csv) {
 }
 
 // <feed>.csv.tmp = header + parts in seq order; the parts are then trashed. promoteSnapshot_ makes it <feed>.csv.
+// A live .tmp is complete (written in one createFile, and begin removes older ones): a retried commit keeps it
+// and only trashes parts left over, so parts already trashed are never lost.
 function assembleSnapshot_(date, feed, headers) {
   var folder = snapshotDateFolder_(date, true);
   var parts = listParts_(folder, feed);
+  var it = folder.getFilesByName(feed + '.csv.tmp');
+  while (it.hasNext()) {
+    if (it.next().isTrashed()) continue;
+    parts.forEach(function (p) {
+      p.file.setTrashed(true);
+    });
+    return;
+  }
   var content = toCsv_(headers, []);
   parts.forEach(function (p) {
     content += p.file.getBlob().getDataAsString('UTF-8');

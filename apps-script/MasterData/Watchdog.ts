@@ -1,6 +1,6 @@
 // R37 daily watchdog. Plain JavaScript syntax so Node vm can load this file in tests.
 
-// Time-driven (daily, 08:15 Europe/Berlin): logs NO_REFRESH when _Refresh_Log B1 (last successful
+// Time-driven (daily, 08:15 Europe/Berlin), under the script lock with its own wait (R49): logs NO_REFRESH when _Refresh_Log B1 (last successful
 // refresh, ISO UTC) is missing or not today's Berlin date.
 function checkDailyRefresh() {
   return withScriptLock_(function () {
@@ -10,7 +10,7 @@ function checkDailyRefresh() {
     if (last && berlinDate_(last) === berlinDate_(now)) return { ok: true, lastSuccess: last };
     writeLogRows_(ss, logRows_(logRun_('', '', now, ''), [], 'NO_REFRESH', 'no successful refresh today'));
     return { ok: false, lastSuccess: last };
-  });
+  }, MASTERDATA_CONFIG.WATCHDOG_LOCK_TIMEOUT_MS);
 }
 
 // Deletes every project trigger that runs handler.

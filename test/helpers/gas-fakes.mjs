@@ -266,6 +266,7 @@ export class FakeFolder {
   getFilesByName(n) { return iter(this.files.filter((f) => f.name === n)); }
   createFile(name, content, mimeType) {
     if (typeof content !== 'string') throw new Error('createFile: content must be a string in this fake');
+    if (this.drive.failCreate) this.drive.failCreate(this, name); // test hook: simulate a Drive error
     const f = new FakeFile(this, name, content, mimeType || 'text/plain');
     this.files.push(f);
     return f;
@@ -321,11 +322,16 @@ function formatDate(date, timeZone, pattern) {
 }
 
 // ScriptApp triggers: getProjectTriggers, deleteTrigger,
-// newTrigger(fn).timeBased().everyDays().atHour().nearMinute().inTimezone().create() and .everyMinutes(n).create().
+// newTrigger(fn).timeBased().everyDays().atHour().nearMinute().inTimezone().create(), .everyMinutes(n).create()
+// and the one-off .after(ms).create(). Every trigger has getUniqueId().
 // Assumption (real Apps Script): everyMinutes accepts only 1, 5, 10, 15 or 30.
 export function makeScriptApp() {
   const triggers = [];
-  const trigger = (spec) => ({ ...spec, getHandlerFunction: () => spec.handler });
+  let ids = 0;
+  const trigger = (spec) => {
+    const id = `trigger-${++ids}`;
+    return { ...spec, id, getHandlerFunction: () => spec.handler, getUniqueId: () => id };
+  };
   const ScriptApp = {
     getProjectTriggers: () => [...triggers],
     deleteTrigger: (t) => {
@@ -343,6 +349,7 @@ export function makeScriptApp() {
           return clock;
         },
         nearMinute(m) { spec.nearMinute = m; return clock; },
+        after(ms) { spec.after = ms; return clock; },
         atHour(h) { spec.atHour = h; return clock; },
         inTimezone(tz) { spec.timeZone = tz; return clock; },
         create() { const t = trigger(spec); triggers.push(t); return t; },

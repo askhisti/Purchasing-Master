@@ -25,9 +25,9 @@ function nowIso_() {
 }
 
 // Every action runs under the script lock so begin/chunk/commit/fail never interleave.
-function withScriptLock_(fn) {
+function withScriptLock_(fn, waitMs = MASTERDATA_CONFIG.LOCK_TIMEOUT_MS) {
   var lock = LockService.getScriptLock();
-  lock.waitLock(MASTERDATA_CONFIG.LOCK_TIMEOUT_MS);
+  lock.waitLock(waitMs);
   try {
     return fn();
   } finally {
@@ -130,20 +130,31 @@ function stageRows_(run, f, seq, rows) {
 
 // {action:'commit', runId}. Everything that can reject the run happens before any live tab is touched.
 function handleCommit_(req) {
+  return commitRun_(req, false);
+}
+
+// The commit logic. A rejection (staged count, row drop) or an error after the swap started discards the run
+// and logs FAILED. An exception before the swap does the same unless retryable (the Inbox puller): then the
+// run, its staging tabs and snapshot files are kept and {ok:false, error, transient:true} is returned.
+function commitRun_(req, retryable) {
   var run = getActiveRun_();
   if (!run || run.runId !== req.runId) return notActiveRun_();
   var ss = spreadsheet_();
   var swapStarted = false;
   var counts = {};
   var prevCounts;
+  var rejection = null;
   try {
-    run.feeds.forEach(function (f) {
-      if (f.staged !== f.rowCount) throw new Error(f.feed + ': staged ' + f.staged + ' rows, expected ' + f.rowCount);
+    for (var i = 0; i < run.feeds.length && !rejection; i++) {
+      var f = run.feeds[i];
+      if (f.staged !== f.rowCount) rejection = f.feed + ': staged ' + f.staged + ' rows, expected ' + f.rowCount;
       counts[f.feed] = f.staged;
-    });
-    prevCounts = getLastRowCounts_();
-    var drop = checkRowDrop_(prevCounts, counts, MASTERDATA_CONFIG.MAX_ROW_DROP);
-    if (drop) throw new Error(drop);
+    }
+    if (!rejection) {
+      prevCounts = getLastRowCounts_();
+      rejection = checkRowDrop_(prevCounts, counts, MASTERDATA_CONFIG.MAX_ROW_DROP);
+    }
+    if (rejection) throw new Error(rejection);
     run.feeds.forEach(function (f) {
       assembleSnapshot_(run.date, f.feed, f.headers);
     });
@@ -155,6 +166,7 @@ function handleCommit_(req) {
       })
     );
   } catch (err) {
+    if (retryable && !rejection && !swapStarted) return { ok: false, error: errorMessage_(err), transient: true };
     var message = (swapStarted ? 'after swap started (live tabs may be updated): ' : '') + errorMessage_(err);
     try {
       discardRun_(ss, run);

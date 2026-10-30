@@ -275,6 +275,19 @@ test('a commit failing after snapshot assembly keeps the previous same-date CSV 
   assert.strictEqual(e.stored.ACTIVE_RUN, undefined);
 });
 
+test('doPost commit: a Drive error during snapshot assembly still discards the run and logs FAILED (no transient flag)', () => {
+  const e = env();
+  runProducts(e, RUN, PROD_ROWS);
+  e.drive.failCreate = (folder, name) => {
+    if (name === 'products.csv.tmp') throw new Error('Drive create failed');
+  };
+  const res = commit(e, RUN);
+  assert.deepStrictEqual(res, { ok: false, error: 'Drive create failed' });
+  assert.strictEqual(e.stored.ACTIVE_RUN, undefined);
+  assert.deepStrictEqual(e.ss.names().filter((n) => n.startsWith('__staging_')), []);
+  assert.strictEqual(logRow(e, 'products')[6], 'FAILED');
+});
+
 test('a failing FAILED-log write does not hide the original commit error', () => {
   const e = env();
   begin(e, RUN, { products: 2 });

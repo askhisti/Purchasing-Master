@@ -25,7 +25,7 @@ test('R37: checkDailyRefresh logs NO_REFRESH when there is no log sheet / no B1'
   const [runId, started, finished, feed, count, src, status, message] = rows[0];
   assert.deepStrictEqual([runId, started, feed, count, src, status, message], ['', '', '', '', '', 'NO_REFRESH', 'no successful refresh today']);
   assert.match(finished, BERLIN_FMT);
-  assert.deepStrictEqual(e.lockLog.map((l) => l[0]), ['wait', 'release'], 'runs under the script lock');
+  assert.deepStrictEqual(e.lockLog, [['wait', 330000], ['release']], 'R49: runs under the script lock, waiting up to 330 s');
 });
 
 test('R37: checkDailyRefresh is silent when B1 is today (Berlin)', () => {

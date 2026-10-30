@@ -88,6 +88,31 @@ function manifestFile(manifest) {
   return { name: `${manifest.runId}__manifest.json`, bytes: Buffer.from(JSON.stringify(manifest), 'utf8'), mimeType: 'application/json' };
 }
 
+// Each staged slice / commit "takes" ms on the injected clock.
+function sliceCost(e, ms) {
+  const real = e.context.stageRows_;
+  e.context.stageRows_ = (...args) => {
+    e.clock.t += ms;
+    return real(...args);
+  };
+}
+function oneOffTriggers(e) {
+  return e.triggers.filter((t) => t.getHandlerFunction() === 'pollInbox' && t.after !== undefined);
+}
+function countBegins(e) {
+  const counter = { n: 0 };
+  const real = e.context.handleBegin_;
+  e.context.handleBegin_ = (req) => {
+    counter.n++;
+    return real(req);
+  };
+  return counter;
+}
+function stagingWrites(e) {
+  return e.ss.calls.filter((c) => c.op === 'setValues' && c.sheet.startsWith('__staging_') && c.row >= 2)
+    .map((c) => `${c.sheet}:${c.row}x${c.numRows}`).sort();
+}
+
 function entries(e) {
   const log = e.ss.getSheetByName('_Refresh_Log');
   return log ? log.data().slice(4) : [];
@@ -154,41 +179,73 @@ test('an empty Inbox is idle and writes nothing', () => {
   assert.strictEqual(e.stored.LAST_PROCESSED_RUN, undefined);
 });
 
-test('a run hitting the time budget resumes on the next poll without restaging or re-running begin', () => {
+test('slicing stops when elapsed + the previous slice would pass 270 s; the next poll resumes without restaging or re-running begin', () => {
   const e = env();
+  e.context.installPullTrigger();
   e.context.MASTERDATA_CONFIG.PULL_SLICE_ROWS = 1;
-  e.clock.step = 100000; // every clock read advances 100 s; the budget is 270 s
-  let begins = 0;
-  const realBegin = e.context.handleBegin_;
-  e.context.handleBegin_ = (req) => {
-    begins++;
-    return realBegin(req);
-  };
+  sliceCost(e, 100000); // every slice takes 100 s
+  const begins = countBegins(e);
   drop(e, payload(RUN).files);
 
-  const first = e.poll();
-  assert.deepStrictEqual(first, { status: 'staging', runId: RUN });
-  const run = JSON.parse(e.stored.ACTIVE_RUN);
-  const staged = run.feeds.reduce((n, f) => n + f.staged, 0);
-  assert.ok(staged > 0 && staged < 4, `partly staged (${staged} of 4 rows)`);
+  // Poll 1: slices at 0 s and 100 s; at 200 s the next one (200 + 100 > 270) is not started.
+  assert.deepStrictEqual(e.poll(), { status: 'staging', runId: RUN });
+  let run = JSON.parse(e.stored.ACTIVE_RUN);
+  assert.deepStrictEqual(run.feeds.map((f) => f.staged), [2, 0, 0, 0, 0, 0]);
   assert.strictEqual(e.ss.getSheetByName('Components'), null, 'live tabs untouched while staging');
   assert.strictEqual(e.inbox.fileNames().length, 7, 'Inbox files stay until the run ends');
+  // R51: a one-off continuation trigger in 60 s; the 15-minute trigger stays.
+  let oneOffs = oneOffTriggers(e);
+  assert.strictEqual(oneOffs.length, 1);
+  assert.strictEqual(oneOffs[0].after, 60000);
+  const firstId = oneOffs[0].getUniqueId();
 
-  const statuses = [first.status];
-  for (let i = 0; i < 10 && statuses.at(-1) !== 'committed'; i++) statuses.push(e.poll().status);
-  assert.strictEqual(statuses.at(-1), 'committed', `polls: ${statuses.join(',')}`);
-  assert.ok(statuses.length >= 2);
-  assert.strictEqual(begins, 1, 'begin runs once');
+  // Poll 2: stages the remaining 2 rows; at 200 s it is too late to start the commit (>= 150 s).
+  assert.deepStrictEqual(e.poll(), { status: 'staging', runId: RUN });
+  run = JSON.parse(e.stored.ACTIVE_RUN);
+  assert.deepStrictEqual(run.feeds.map((f) => f.staged), [3, 0, 0, 0, 1, 0]);
+  oneOffs = oneOffTriggers(e);
+  assert.strictEqual(oneOffs.length, 1, 'the spent one-off trigger was deleted, a new one created');
+  assert.notStrictEqual(oneOffs[0].getUniqueId(), firstId);
 
-  // Each staged row was written exactly once.
-  const writes = e.ss.calls.filter((c) => c.op === 'setValues' && c.sheet.startsWith('__staging_') && c.row >= 2);
-  assert.deepStrictEqual(writes.map((c) => `${c.sheet}:${c.row}x${c.numRows}`).sort(),
-    ['__staging_Components:2x1', '__staging_Components:3x1', '__staging_Components:4x1', '__staging_Products:2x1']);
+  // Poll 3: commits at once.
+  assert.deepStrictEqual(e.poll(), { status: 'committed', runId: RUN });
+  assert.strictEqual(begins.n, 1, 'begin runs once');
+  assert.deepStrictEqual(stagingWrites(e),
+    ['__staging_Components:2x1', '__staging_Components:3x1', '__staging_Components:4x1', '__staging_Products:2x1'], 'each row staged once');
   assert.deepStrictEqual(e.ss.getSheetByName('Components').data(), [COMP.headers, ...sheetRows(COMP_ROWS)]);
   assert.strictEqual(snapshotDay(e, '2026-10-30').file('components.csv').getBlob().getDataAsString().split('\n').length, 5);
-  assert.deepStrictEqual(entries(e).map((r) => r[6]), Array(6).fill('OK'), 'no ABANDONED or FAILED rows');
+  assert.deepStrictEqual(entries(e).map((r) => r[6]), Array(6).fill('OK'), 'no ABANDONED, RETRY or FAILED rows');
   assert.deepStrictEqual(e.inbox.fileNames(), []);
+  assert.deepStrictEqual(oneOffTriggers(e), [], 'no continuation left after the commit');
+  assert.deepStrictEqual(e.triggers.filter((t) => t.everyMinutes === 15).length, 1, 'the 15-minute trigger is kept');
 });
+
+test('the commit only starts before 150 s of the poll; later it waits for the next poll', () => {
+  let e = env();
+  sliceCost(e, 160000);
+  drop(e, payload(RUN, { components: COMP_ROWS }).files);
+  assert.deepStrictEqual(e.poll(), { status: 'staging', runId: RUN });
+  assert.strictEqual(e.ss.getSheetByName('Components'), null);
+  assert.strictEqual(oneOffTriggers(e).length, 1);
+  assert.deepStrictEqual(e.poll(), { status: 'committed', runId: RUN });
+
+  e = env();
+  sliceCost(e, 140000);
+  drop(e, payload(RUN, { components: COMP_ROWS }).files);
+  assert.deepStrictEqual(e.poll(), { status: 'committed', runId: RUN });
+  assert.strictEqual(e.context.MASTERDATA_CONFIG.PULL_COMMIT_START_MAX_MS, 150000);
+  assert.deepStrictEqual(oneOffTriggers(e), []);
+});
+
+test('the start time is read on entry, before tryLock', () => {
+  const e = env();
+  e.context.pullerNow_ = () => {
+    e.lockLog.push(['now']);
+    return NOW;
+  };
+  e.poll();
+  assert.deepStrictEqual(e.lockLog.slice(0, 2), [['now'], ['try', 5000]]);
+})
 
 test('the slice size is 4,000 rows and the budget 270 s (Config.ts)', () => {
   const e = env();
@@ -352,7 +409,8 @@ test('Inbox files older than 3 days that belong to no manifest are trashed; newe
   e.inbox.addFile('2026-10-21T06-15-00__products.json.gz', Buffer.from('x'), { created: recent });
   assert.deepStrictEqual(e.poll(), { status: 'idle' });
   assert.deepStrictEqual(e.inbox.fileNames(), ['2026-10-21T06-15-00__products.json.gz', '2026-10-31T06-15-00__components.json.gz', 'readme.txt']);
-  assert.deepStrictEqual(entries(e), [], 'orphans are not logged');
+  assert.deepStrictEqual(entries(e).map((r) => [r[0], r[6], r[7]]),
+    [['2026-10-20T06-15-00', 'INCOMPLETE', 'no manifest after 3 days; 1 file(s) trashed']], 'foreign files are not logged');
 });
 
 test('a busy script lock makes the poll exit quietly', () => {
@@ -372,9 +430,12 @@ test('a manifest at or before LAST_PROCESSED_RUN is never processed again; its l
   drop(e, payload(RUN).files);
   drop(e, payload(RUN2).files);
   assert.deepStrictEqual(e.poll(), { status: 'idle' });
-  assert.deepStrictEqual(e.ss.names(), []);
+  assert.deepStrictEqual(TABS.filter((t) => e.ss.getSheetByName(t)), []);
   assert.deepStrictEqual(e.inbox.fileNames(), []);
   assert.strictEqual(e.stored.LAST_PROCESSED_RUN, RUN2);
+  // The older run is logged SUPERSEDED; leftovers of the last processed run itself are not logged.
+  assert.deepStrictEqual(entries(e).map((r) => [r[0], r[6], r[7]]),
+    [[RUN, 'SUPERSEDED', `not processed: the newer run ${RUN2} was already processed; files trashed`]]);
 });
 
 test('a runId more than a day in the future is FAILED without moving LAST_PROCESSED_RUN', () => {
@@ -386,6 +447,44 @@ test('a runId more than a day in the future is FAILED without moving LAST_PROCES
   assert.deepStrictEqual(e.ss.names(), ['_Refresh_Log']);
   assert.strictEqual(e.stored.LAST_PROCESSED_RUN, RUN);
   assert.deepStrictEqual(e.inbox.fileNames(), []);
+  assert.deepStrictEqual(entries(e).map((r) => [r[0], r[6], r[7]]), [[future, 'FAILED', 'runId is in the future']]);
+  // The same runId again (re-upload, or files that could not be trashed): not logged a second time.
+  drop(e, payload(future).files);
+  assert.deepStrictEqual(e.poll(), { status: 'failed', runId: future, error: 'runId is in the future' });
+  assert.strictEqual(entries(e).length, 1);
+  assert.deepStrictEqual(e.inbox.fileNames(), []);
+});
+
+test('a future runId never moves LAST_PROCESSED_RUN, even when logging fails', () => {
+  const e = env({ props: { LAST_PROCESSED_RUN: RUN } });
+  const future = '2026-11-05T06-15-00';
+  drop(e, payload(future, {}, { status: 'failed', reason: 'x' }).files);
+  const real = e.context.SpreadsheetApp.getActiveSpreadsheet;
+  let n = 0;
+  e.context.SpreadsheetApp.getActiveSpreadsheet = () => {
+    n++;
+    if (n <= 2) throw new Error('transient');
+    return real();
+  };
+  assert.throws(() => e.context.pollInbox(), /transient/, 'nothing could be logged');
+  assert.strictEqual(e.stored.LAST_PROCESSED_RUN, RUN);
+  assert.deepStrictEqual(e.poll(), { status: 'failed', runId: future, error: 'runId is in the future' });
+  assert.strictEqual(e.stored.LAST_PROCESSED_RUN, RUN);
+  assert.deepStrictEqual(entries(e).map((r) => [r[0], r[6]]), [[future, 'FAILED']]);
+});
+
+test('errors on the future-runId path are not run errors: no RETRY, never LAST_PROCESSED_RUN', () => {
+  const e = env({ props: { LAST_PROCESSED_RUN: RUN } });
+  const future = '2026-11-05T06-15-00';
+  drop(e, payload(future).files);
+  const real = e.context.writeLogRows_;
+  e.context.writeLogRows_ = (ss, rows) => {
+    if (rows[0][7] === 'runId is in the future') throw new Error('log hiccup');
+    return real(ss, rows);
+  };
+  for (let i = 0; i < 3; i++) assert.deepStrictEqual(e.poll(), { status: 'error', error: 'inbox: log hiccup' });
+  assert.strictEqual(e.stored.LAST_PROCESSED_RUN, RUN);
+  assert.deepStrictEqual(entries(e).map((r) => [r[0], r[6], r[7]]), [['', 'FAILED', 'inbox: log hiccup']], 'logged once, no RETRY');
 });
 
 test('the row-drop guard still rejects a run: FAILED once, live untouched, Inbox files trashed', () => {
@@ -397,27 +496,93 @@ test('the row-drop guard still rejects a run: FAILED once, live untouched, Inbox
   assert.match(res.error, /row drop over 20%/);
   assert.deepStrictEqual(live.data(), [COMP.headers, ['OLD', 'old', 1, true, 1]]);
   assert.deepStrictEqual(stagingTabs(e), []);
-  assert.deepStrictEqual([...new Set(entries(e).map((r) => r[6]))], ['FAILED']);
+  assert.deepStrictEqual([...new Set(entries(e).map((r) => r[6]))], ['FAILED'], 'a validation rejection is final: no RETRY');
+  assert.strictEqual(e.stored.PULL_RETRY, undefined);
   assert.strictEqual(e.stored.LAST_PROCESSED_RUN, RUN);
   assert.deepStrictEqual(e.inbox.fileNames(), []);
 });
 
-test('an unexpected error during a run is logged FAILED once and the trigger does not throw', () => {
+test('R48: a transient error is retried on the next poll: one RETRY row, then OK', () => {
+  const e = env();
+  drop(e, payload(RUN).files);
+  let fails = 1;
+  e.drive.failBlob = (file) => {
+    if (file.name.endsWith('__products.json.gz') && fails-- > 0) throw new Error('Drive hiccup');
+  };
+  const res = e.poll();
+  assert.deepStrictEqual(res, { status: 'retry', runId: RUN, error: 'Drive hiccup' });
+  assert.deepStrictEqual(entries(e).map((r) => [r[0], r[1], r[6], r[7]]), [[RUN, berlin(STARTED), 'RETRY', 'attempt 1 of 3: Drive hiccup']]);
+  assert.strictEqual(e.stored.LAST_PROCESSED_RUN, undefined);
+  assert.strictEqual(e.inbox.fileNames().length, 7);
+  assert.deepStrictEqual(e.poll(), { status: 'committed', runId: RUN });
+  assert.deepStrictEqual(entries(e).map((r) => r[6]), [...Array(6).fill('OK'), 'RETRY']);
+  assert.strictEqual(e.stored.PULL_RETRY, undefined, 'counter cleared on success');
+  assert.deepStrictEqual(e.inbox.fileNames(), []);
+});
+
+test('R48: a transient commit error keeps staging; the retry commits without restaging, snapshots complete', () => {
+  const e = env();
+  const begins = countBegins(e);
+  drop(e, payload(RUN).files);
+  let fails = 1;
+  // Components is assembled (parts trashed, .tmp written) before products fails.
+  e.drive.failCreate = (folder, name) => {
+    if (name === 'products.csv.tmp' && fails-- > 0) throw new Error('Drive create failed');
+  };
+  const res = e.poll();
+  assert.strictEqual(res.status, 'retry');
+  assert.match(res.error, /Drive create failed/);
+  assert.strictEqual(stagingTabs(e).length, 6, 'staging kept');
+  assert.ok(e.stored.ACTIVE_RUN, 'active run kept');
+  assert.strictEqual(e.ss.getSheetByName('Components'), null, 'live tabs untouched');
+  const writes = stagingWrites(e);
+
+  assert.deepStrictEqual(e.poll(), { status: 'committed', runId: RUN });
+  assert.strictEqual(begins.n, 1);
+  assert.deepStrictEqual(stagingWrites(e), writes, 'nothing restaged');
+  const day = snapshotDay(e, '2026-10-30');
+  assert.deepStrictEqual(day.fileNames(), ALL_CSV);
+  assert.strictEqual(day.file('components.csv').getBlob().getDataAsString().split('\n').length, 5, 'components.csv keeps its rows');
+  assert.strictEqual(day.file('products.csv').getBlob().getDataAsString(), 'Product ID,Product Display Name,SOP\n42,Inverter,2027-01-15\n');
+  assert.deepStrictEqual(entries(e).map((r) => r[6]), [...Array(6).fill('OK'), 'RETRY']);
+});
+
+test('R48: the third failed attempt ends the run FAILED', () => {
   const e = env();
   drop(e, payload(RUN).files);
   e.drive.failBlob = (file) => {
     if (file.name.endsWith('__products.json.gz')) throw new Error('Drive hiccup');
   };
+  assert.strictEqual(e.poll().status, 'retry');
+  assert.strictEqual(e.poll().status, 'retry');
   const res = e.poll();
-  assert.strictEqual(res.status, 'failed');
-  assert.match(res.error, /unexpected error: Drive hiccup/);
-  assert.deepStrictEqual(entries(e).map((r) => [r[0], r[6]]), [[RUN, 'FAILED']]);
+  assert.deepStrictEqual(res, { status: 'failed', runId: RUN, error: 'attempt 3 of 3: Drive hiccup' });
+  assert.deepStrictEqual(entries(e).map((r) => [r[0], r[6], r[7]]), [
+    [RUN, 'FAILED', 'attempt 3 of 3: Drive hiccup'],
+    [RUN, 'RETRY', 'attempt 2 of 3: Drive hiccup'],
+    [RUN, 'RETRY', 'attempt 1 of 3: Drive hiccup'],
+  ]);
   assert.deepStrictEqual(stagingTabs(e), []);
   assert.strictEqual(e.stored.ACTIVE_RUN, undefined);
+  assert.strictEqual(e.stored.PULL_RETRY, undefined);
   assert.strictEqual(e.stored.LAST_PROCESSED_RUN, RUN);
   assert.deepStrictEqual(e.inbox.fileNames(), []);
   assert.deepStrictEqual(e.poll(), { status: 'idle' });
-  assert.strictEqual(entries(e).length, 1);
+  assert.strictEqual(entries(e).length, 3);
+});
+
+test('a commit that finds the run no longer active writes a FAILED row', () => {
+  const e = env();
+  drop(e, payload(RUN).files);
+  const real = e.context.commitRun_;
+  e.context.commitRun_ = (req, retryable) => {
+    e.context.clearActiveRun_();
+    return real(req, retryable);
+  };
+  assert.deepStrictEqual(e.poll(), { status: 'failed', runId: RUN, error: 'not the active run' });
+  assert.deepStrictEqual(entries(e).map((r) => [r[0], r[6], r[7]]), [[RUN, 'FAILED', 'not the active run']]);
+  assert.strictEqual(e.stored.LAST_PROCESSED_RUN, RUN);
+  assert.deepStrictEqual(e.inbox.fileNames(), []);
 });
 
 test('a Drive error while trashing a committed run\'s files keeps the run OK; a later poll trashes the leftovers', () => {
