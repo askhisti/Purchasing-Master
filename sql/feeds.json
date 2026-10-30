@@ -1,0 +1,404 @@
+{
+  "feeds": [
+    {
+      "feed": "components",
+      "tab": "Components",
+      "sqlFile": "sql/feeds/components.sql",
+      "pageLimit": 5000,
+      "columns": [
+        {
+          "sql": "ME_EC",
+          "header": "ME_EC",
+          "type": "string"
+        },
+        {
+          "sql": "MANUFACTURER",
+          "header": "Manufacturer",
+          "type": "string"
+        },
+        {
+          "sql": "MPN",
+          "header": "MPN",
+          "type": "string"
+        },
+        {
+          "sql": "DESCRIPTION",
+          "header": "Description",
+          "type": "string"
+        },
+        {
+          "sql": "HW_CATEGORY",
+          "header": "HW Category",
+          "type": "string"
+        },
+        {
+          "sql": "HW_SUBCATEGORY",
+          "header": "HW Subcategory",
+          "type": "string"
+        },
+        {
+          "sql": "COMPONENT_STATUS",
+          "header": "Component Status",
+          "type": "string"
+        },
+        {
+          "sql": "LIFECYCLE",
+          "header": "Lifecycle",
+          "type": "string"
+        },
+        {
+          "sql": "YEARS_TO_EOL",
+          "header": "Years To EOL",
+          "type": "number"
+        },
+        {
+          "sql": "ME_MS",
+          "header": "ME_MS",
+          "type": "string"
+        },
+        {
+          "sql": "PRIMARY_ME_MS",
+          "header": "Primary ME_MS",
+          "type": "string"
+        },
+        {
+          "sql": "EMS_PART_NUMBERS",
+          "header": "EMS Part Numbers",
+          "type": "string"
+        },
+        {
+          "sql": "IS_SOURCED_BY_US",
+          "header": "Is Sourced By Us",
+          "type": "boolean"
+        }
+      ],
+      "demandYears": {
+        "sqlPrefix": "DEMAND_Y",
+        "count": 11
+      }
+    },
+    {
+      "feed": "multisource",
+      "tab": "Multisource",
+      "sqlFile": "sql/feeds/multisource.sql",
+      "pageLimit": 1000,
+      "columns": [
+        {
+          "sql": "ME_MS",
+          "header": "ME_MS",
+          "type": "string"
+        },
+        {
+          "sql": "SOURCING_HEALTH",
+          "header": "Sourcing Health",
+          "type": "string"
+        },
+        {
+          "sql": "MEMBER_COUNT",
+          "header": "Member Count",
+          "type": "number"
+        },
+        {
+          "sql": "USABLE_MEMBER_COUNT",
+          "header": "Usable Member Count",
+          "type": "number"
+        },
+        {
+          "sql": "MANUFACTURER_COUNT",
+          "header": "Manufacturer Count",
+          "type": "number"
+        }
+      ],
+      "demandYears": {
+        "sqlPrefix": "DEMAND_Y",
+        "count": 11
+      }
+    },
+    {
+      "feed": "multisource_members",
+      "tab": "Multisource_Members",
+      "sqlFile": "sql/feeds/multisource_members.sql",
+      "pageLimit": 5000,
+      "columns": [
+        {
+          "sql": "ME_MS",
+          "header": "ME_MS",
+          "type": "string"
+        },
+        {
+          "sql": "ME_EC",
+          "header": "ME_EC",
+          "type": "string"
+        },
+        {
+          "sql": "MEMBER_STATUS",
+          "header": "Member Status",
+          "type": "string"
+        },
+        {
+          "sql": "IS_USABLE",
+          "header": "Is Usable",
+          "type": "boolean"
+        },
+        {
+          "sql": "MEMBER_PRIORITY",
+          "header": "Member Priority",
+          "type": "number"
+        },
+        {
+          "sql": "MANUFACTURER",
+          "header": "Manufacturer",
+          "type": "string"
+        },
+        {
+          "sql": "MPN",
+          "header": "MPN",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "feed": "component_usage",
+      "tab": "Component_Usage",
+      "sqlFile": "sql/feeds/component_usage.sql",
+      "pageLimit": 2000,
+      "columns": [
+        {
+          "sql": "ME_EC",
+          "header": "ME_EC",
+          "type": "string"
+        },
+        {
+          "sql": "MPN",
+          "header": "MPN",
+          "type": "string"
+        },
+        {
+          "sql": "MANUFACTURER",
+          "header": "Manufacturer",
+          "type": "string"
+        },
+        {
+          "sql": "PRODUCT",
+          "header": "Product",
+          "type": "string"
+        },
+        {
+          "sql": "PRODUCT_ID",
+          "header": "Product ID",
+          "type": "number"
+        },
+        {
+          "sql": "PROJECT",
+          "header": "Project",
+          "type": "string"
+        },
+        {
+          "sql": "PROGRAM",
+          "header": "Program",
+          "type": "string"
+        },
+        {
+          "sql": "CUSTOMER",
+          "header": "Customer",
+          "type": "string"
+        },
+        {
+          "sql": "EMS",
+          "header": "EMS",
+          "type": "string"
+        },
+        {
+          "sql": "QTY_PER_UNIT",
+          "header": "Qty Per Unit",
+          "type": "number"
+        }
+      ],
+      "demandYears": {
+        "sqlPrefix": "DEMAND_Y",
+        "count": 11
+      }
+    },
+    {
+      "feed": "products",
+      "tab": "Products",
+      "sqlFile": "sql/feeds/products.sql",
+      "pageLimit": 5000,
+      "columns": [
+        {
+          "sql": "PRODUCT_ID",
+          "header": "Product ID",
+          "type": "number"
+        },
+        {
+          "sql": "PRODUCT_DISPLAY_NAME",
+          "header": "Product Display Name",
+          "type": "string"
+        },
+        {
+          "sql": "PROJECT",
+          "header": "Project",
+          "type": "string"
+        },
+        {
+          "sql": "PROGRAM",
+          "header": "Program",
+          "type": "string"
+        },
+        {
+          "sql": "CUSTOMER",
+          "header": "Customer",
+          "type": "string"
+        },
+        {
+          "sql": "SAMPLE_PHASE",
+          "header": "Sample Phase",
+          "type": "string"
+        },
+        {
+          "sql": "EMS",
+          "header": "EMS",
+          "type": "string"
+        },
+        {
+          "sql": "SOP",
+          "header": "SOP",
+          "type": "date"
+        },
+        {
+          "sql": "IS_HIERARCHY_ACTIVE",
+          "header": "Is Hierarchy Active",
+          "type": "boolean"
+        }
+      ]
+    },
+    {
+      "feed": "mecl_price",
+      "tab": "MECL_Price",
+      "sqlFile": "sql/feeds/mecl_price.sql",
+      "pageLimit": 1500,
+      "columns": [
+        {
+          "sql": "PRICE_ID",
+          "header": "Price ID",
+          "type": "number"
+        },
+        {
+          "sql": "ME_EC",
+          "header": "ME_EC",
+          "type": "string"
+        },
+        {
+          "sql": "RESOLVED_ME_EC",
+          "header": "Resolved ME_EC",
+          "type": "string"
+        },
+        {
+          "sql": "IS_LINKED",
+          "header": "Is Linked",
+          "type": "boolean"
+        },
+        {
+          "sql": "PRICE_TYPE",
+          "header": "Price Type",
+          "type": "string"
+        },
+        {
+          "sql": "PRICE_OWNER",
+          "header": "Price Owner",
+          "type": "string"
+        },
+        {
+          "sql": "VENDOR",
+          "header": "Vendor",
+          "type": "string"
+        },
+        {
+          "sql": "VENDOR_PART_NUMBER",
+          "header": "Vendor Part Number",
+          "type": "string"
+        },
+        {
+          "sql": "VOLUME_STAGE",
+          "header": "Volume Stage",
+          "type": "string"
+        },
+        {
+          "sql": "PRICE_YEAR",
+          "header": "Year",
+          "type": "number"
+        },
+        {
+          "sql": "MOQ",
+          "header": "MOQ",
+          "type": "number"
+        },
+        {
+          "sql": "PRICE",
+          "header": "Price",
+          "type": "number"
+        },
+        {
+          "sql": "CURRENCY",
+          "header": "Currency",
+          "type": "string"
+        },
+        {
+          "sql": "PRICE_EUR",
+          "header": "Price EUR (current rate)",
+          "type": "number"
+        },
+        {
+          "sql": "QUOTED_UNIT",
+          "header": "Quoted Unit",
+          "type": "string"
+        },
+        {
+          "sql": "QUOTED_MANUFACTURER",
+          "header": "Quoted Manufacturer",
+          "type": "string"
+        },
+        {
+          "sql": "QUOTED_MPN",
+          "header": "Quoted MPN",
+          "type": "string"
+        },
+        {
+          "sql": "QUOTE_REFERENCE",
+          "header": "Quote Reference",
+          "type": "string"
+        },
+        {
+          "sql": "QUOTE_FILE",
+          "header": "Quote File",
+          "type": "string"
+        },
+        {
+          "sql": "VALID_FROM",
+          "header": "Valid From",
+          "type": "date"
+        },
+        {
+          "sql": "VALID_UNTIL",
+          "header": "Valid Until",
+          "type": "date"
+        },
+        {
+          "sql": "IS_VALID_TODAY",
+          "header": "Is Valid Today",
+          "type": "boolean"
+        },
+        {
+          "sql": "IS_BINDING",
+          "header": "Is Binding",
+          "type": "boolean"
+        },
+        {
+          "sql": "CREATED_AT",
+          "header": "Created At",
+          "type": "date"
+        }
+      ]
+    }
+  ]
+}
