@@ -1,0 +1,21 @@
+{
+  "compilerOptions": {
+    "target": "es2019",
+    "lib": [
+      "esnext",
+      "dom"
+    ],
+    "types": [
+      "google-apps-script"
+    ],
+    "noEmit": true,
+    "strict": false,
+    "noImplicitAny": false,
+    "useUnknownInCatchVariables": false,
+    "skipLibCheck": true,
+    "experimentalDecorators": true
+  },
+  "include": [
+    "apps-script/MasterData/**/*.ts"
+  ]
+}

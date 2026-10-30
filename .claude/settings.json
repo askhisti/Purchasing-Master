@@ -1,0 +1,2 @@
+{ "hooks": { "PostToolUse": [ { "matcher": "mcp__claude_ai_Snowflake_-_ME_Data__sql",
+  "hooks": [ { "type": "command", "command": "node refresh/capture-hook.mjs" } ] } ] } }

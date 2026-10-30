@@ -1,0 +1,177 @@
+{
+ "execution_status": "Result truncated to fit tool-output budget; full data remains available via query_id. To inspect more rows: project fewer columns, drop large text/blob columns, aggregate, or set a smaller LIMIT. Note: truncation drops trailing rows then trailing columns, so put small identifier columns (id, key) before any large text/blob columns in your SELECT to keep them in the sample.",
+ "query_id": "01c813bd-0109-2570-0005-279201396326",
+ "result_set": {
+  "data": [
+   [
+    "1",
+    "",
+    "INDICATION",
+    "",
+    "",
+    "1",
+    "2019",
+    "4.730000000",
+    "USD",
+    "2022-08-25 00:00:00.000",
+    "2022-08-25 00:00:00.000",
+    "Analog Devices",
+    "LTC6810HG-1#3ZZTRPBF"
+   ],
+   [
+    "2",
+    "",
+    "INDICATION",
+    "",
+    "",
+    "50000",
+    "2019",
+    "3.790000000",
+    "USD",
+    "2022-08-25 00:00:00.000",
+    "2022-08-25 00:00:00.000",
+    "Analog Devices",
+    "LTC6810HG-1#3ZZTRPBF"
+   ],
+   [
+    "3",
+    "",
+    "INDICATION",
+    "",
+    "",
+    "100000",
+    "2019",
+    "3.520000000",
+    "USD",
+    "2022-08-25 00:00:00.000",
+    "2022-08-25 00:00:00.000",
+    "Analog Devices",
+    "LTC6810HG-1#3ZZTRPBF"
+   ]
+  ],
+  "resultSetMetaData": {
+   "format": "jsonv2",
+   "numRows": 5000,
+   "partition": 0,
+   "partitionInfo": [
+    {
+     "compressedSize": 4953,
+     "rowCount": 598,
+     "uncompressedSize": 99995
+    },
+    {
+     "compressedSize": 47909,
+     "rowCount": 4402,
+     "uncompressedSize": 697446
+    }
+   ],
+   "rowType": [
+    {
+     "length": 0,
+     "name": "COMPONENT_PRICE_ID",
+     "nullable": true,
+     "precision": 38,
+     "scale": 0,
+     "type": "fixed"
+    },
+    {
+     "length": 16777216,
+     "name": "PART_NUMBER",
+     "nullable": true,
+     "precision": 0,
+     "scale": 0,
+     "type": "text"
+    },
+    {
+     "length": 50331648,
+     "name": "PRICE_TYPE",
+     "nullable": true,
+     "precision": 0,
+     "scale": 0,
+     "type": "text"
+    },
+    {
+     "length": 134217728,
+     "name": "PRICE_OWNER_NAME",
+     "nullable": true,
+     "precision": 0,
+     "scale": 0,
+     "type": "text"
+    },
+    {
+     "length": 16777216,
+     "name": "VENDOR",
+     "nullable": true,
+     "precision": 0,
+     "scale": 0,
+     "type": "text"
+    },
+    {
+     "length": 0,
+     "name": "VOLUME_STAGE",
+     "nullable": true,
+     "precision": 38,
+     "scale": 0,
+     "type": "fixed"
+    },
+    {
+     "length": 0,
+     "name": "PRICE_YEAR",
+     "nullable": true,
+     "precision": 38,
+     "scale": 0,
+     "type": "fixed"
+    },
+    {
+     "length": 0,
+     "name": "PRICE_PER_UNIT",
+     "nullable": true,
+     "precision": 38,
+     "scale": 9,
+     "type": "fixed"
+    },
+    {
+     "length": 50331648,
+     "name": "CURRENCY",
+     "nullable": true,
+     "precision": 0,
+     "scale": 0,
+     "type": "text"
+    },
+    {
+     "length": 0,
+     "name": "QUOTE_VALID_START",
+     "nullable": true,
+     "precision": 0,
+     "scale": 9,
+     "type": "timestamp_ntz"
+    },
+    {
+     "length": 0,
+     "name": "QUOTE_VALID_END",
+     "nullable": true,
+     "precision": 0,
+     "scale": 9,
+     "type": "timestamp_ntz"
+    },
+    {
+     "length": 16777216,
+     "name": "QUOTED_MANUFACTURER",
+     "nullable": true,
+     "precision": 0,
+     "scale": 0,
+     "type": "text"
+    },
+    {
+     "length": 16777216,
+     "name": "QUOTED_MANUFACTURER_PARTNUMBER",
+     "nullable": true,
+     "precision": 0,
+     "scale": 0,
+     "type": "text"
+    }
+   ]
+  },
+  "statementHandle": "01c813bd-0109-2570-0005-279201396326"
+ }
+}

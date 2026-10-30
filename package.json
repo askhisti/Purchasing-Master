@@ -1,0 +1,15 @@
+{
+  "name": "purchasing-master",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test \"test/*.test.mjs\"",
+    "validate": "tsc --noEmit -p tsconfig.json",
+    "release": "node scripts/release-gas.mjs"
+  },
+  "devDependencies": {
+    "@types/google-apps-script": "^2.0.8",
+    "typescript": "^6.0.2"
+  }
+}
