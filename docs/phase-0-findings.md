@@ -24,12 +24,10 @@ Run date / environment:
 
 ## S2: web app reachable from a cloud run (Task 3)
 
-- Script ID: 
-- Deployment ID: 
-- `/exec` URL: (also in docs/memory.md)
-- Reachable from cloud run (yes/no): 
-- Env vars present (names only, from probe-webapp output): MASTERDATA_WEBAPP_URL: , MASTERDATA_TOKEN: 
-- How the secret reaches the process (env var name or injected header): 
-- HTTP status: 
-- Response body: 
-- Result: PASS (`{"ok":true,"pong":true}`) / FAIL. Fail path: switch to the GitHub `data`-branch transport (spec section 5) and write a plan amendment replacing Task 7's client and Task 8's `doPost` with a pull trigger.
+Run date / environment: 2026-10-30, local `clasp` against the MasterData script.
+
+- Script ID: `1tvWWeoQrTm9s2yhORqkASkSaq9eixPfjRh6mNSqTryOJwoBurc2MEv95`
+- Deployment ID: none. `clasp create-deployment` (web app, access `ANYONE_ANONYMOUS`) was refused: "ANYONE access has been disabled by your domain administrator".
+- `/exec` URL: none.
+- Reachable from cloud run (yes/no): not testable (no deployment); the probe-webapp skill was never run and has been removed.
+- Result: **FAIL** (2026-10-30). Fail path taken: a GitHub data-branch route was blocked by Claude Code's safety check (company data leaving Google), so the transport is a Google Cloud service account that uploads into the Drive Inbox and the bound script pulls it (`pollInbox`). See `docs/superpowers/plans/2026-10-30-amendment-drive-inbox-transport.md`. The `webapp` block was removed from `appsscript.json` and the release is push-only (R55); `doPost` stays in the code but is not deployed.

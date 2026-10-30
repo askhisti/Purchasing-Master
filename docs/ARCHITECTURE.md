@@ -9,7 +9,7 @@
    - Paging: the first page of every feed asks for `pageLimit` (500) rows; each full page sizes the next one to about `targetPageChars` (250000, top level of `sql/feeds.json`) characters, clamped to 100..20000. A truncated page (fewer rows than `numRows`) is re-asked with the same key and limit `max(100, floor(rows that fit * 0.8))`.
    - A result that cannot be parsed aborts with `unrecognized connector result: <first 200 characters, newlines collapsed>`.
 5. `finish` re-reads the captures, verifies and shapes the rows, and uploads them into the Drive Inbox (a folder in the company shared drive) with the service account `masterdata-uploader`: one `<runId>__<feed>.json.gz` per feed, then `<runId>__manifest.json` last (its presence means the run's files are complete). A failed run uploads only a `failed` manifest (`feeds: []`, with `reason`). The state ends as `uploaded` or `failed`.
-6. MasterData's bound Apps Script polls the Inbox every 15 minutes (`pollInbox`, see "Inbox puller") and runs the same begin -> chunk -> commit logic as the web app internally: staging tabs, validation, row-drop guard, swap into the live tabs, a Raw snapshots CSV per feed, `_Refresh_Log`. It then trashes the run's Inbox files.
+6. MasterData's bound Apps Script polls the Inbox every 5 minutes (R54; `pollInbox`, see "Inbox puller") and runs the same begin -> chunk -> commit logic as the web app internally: staging tabs, validation, row-drop guard, swap into the live tabs, a Raw snapshots CSV per feed, `_Refresh_Log`. It then trashes the run's Inbox files.
 7. A daily time-driven trigger (08:15 Europe/Berlin; Apps Script fires it within 15 minutes of that) runs `checkDailyRefresh` and logs `NO_REFRESH` when no run succeeded that day (R37, R43).
 
 ## Files
@@ -24,8 +24,8 @@
 | `refresh/lib/sql.mjs`, `sql/health.sql`, `sql/feeds/*.sql` | SQL rendering, count and keyset page queries, page sizing |
 | `refresh/lib/result.mjs` | Parses connector results |
 | `refresh/lib/shape.mjs` | Converts raw rows to typed sheet rows |
-| `refresh/lib/google-auth.mjs` | Service account JWT (RS256, `node:crypto`) exchanged for an access token |
-| `refresh/lib/inbox.mjs` | Builds the Inbox files (gz data + manifest) and uploads them with multipart Drive requests, retrying network errors and 5xx |
+| `refresh/lib/google-auth.mjs` | Service account JWT (RS256, `node:crypto`) exchanged for an access token; network errors, 5xx and 429 retried (5 s, 20 s), other 4xx (e.g. `invalid_grant`) fail at once |
+| `refresh/lib/inbox.mjs` | Builds the Inbox files (gz data + manifest) and uploads them with multipart Drive requests, retrying network errors, 5xx, 429 and 403 `rateLimitExceeded` / `userRateLimitExceeded` (5 s, 20 s; R57) |
 | `refresh/config.json` | `inboxFolderId` (override: env `MASTERDATA_INBOX_ID`) |
 | `refresh/lib/state.mjs` | Run id, state file, capture lookup |
 | `apps-script/MasterData/Config.ts` | Constants (token property, folder ids incl. `INBOX_FOLDER_ID`, row-drop limit, log sheet, time zone, locale, watchdog time, puller slice size and time budget) |
@@ -34,7 +34,7 @@
 | `apps-script/MasterData/Sheets.ts` | Staging tabs, swap into live tabs, `_Refresh_Log`, log times, locale, default-sheet cleanup |
 | `apps-script/MasterData/Store.ts`, `Core.ts` | Run storage and shared helpers |
 | `apps-script/MasterData/Watchdog.ts` | `checkDailyRefresh` and `installDailyWatchdogTrigger` (R37, 08:15) |
-| `scripts/release-gas.mjs`, `scripts/release-config.json` | Release: tests, clasp push, version, deploy to the fixed deployment |
+| `scripts/release-gas.mjs`, `scripts/release-lib.mjs` | Release (R55, push-only): tests and validate, `clasp push --force`, and `clasp version` when a description is given. No web app deployment (spike S2 failed) |
 | `docs/sheets.md` | Tab and header contract |
 
 ## Environment and network
@@ -45,13 +45,17 @@
 
 ## Inbox puller (`pollInbox`, Apps Script)
 
-Time-driven every 15 minutes (`installPullTrigger`), plus one-off continuation triggers. Constants in `Config.ts`: `INBOX_FOLDER_ID`, `PULL_SLICE_ROWS` (4000), `PULL_BUDGET_MS` (270 s), `PULL_COMMIT_START_MAX_MS` (150 s), `PULL_CONTINUATION_DELAY_MS` (60 s), `PULL_MAX_ATTEMPTS` (3), `INBOX_ORPHAN_DAYS` (3).
+Time-driven every 5 minutes (`installPullTrigger`, R54), plus one-off continuation triggers. Constants in `Config.ts`: `INBOX_FOLDER_ID`, `PULL_EVERY_MINUTES` (5), `PULL_SLICE_ROWS` (4000), `PULL_BUDGET_MS` (270 s), `PULL_COMMIT_START_MAX_MS` (150 s), `PULL_CONTINUATION_DELAY_MS` (60 s), `PULL_MAX_ATTEMPTS` (3), `PULL_STALL_POLLS` (3), `INBOX_ORPHAN_DAYS` (3), `INBOX_MIN_AGE_MS` (2 min).
 
 - Reads its start time on entry, then takes the script lock with `tryLock(5000)`; when another execution holds it, the poll exits quietly.
-- Under the lock it first deletes the one-off continuation triggers earlier polls created (their ids are in Script Property `PULL_CONTINUATION_TRIGGERS`); the 15-minute trigger is never touched.
+- Under the lock it first deletes the one-off continuation triggers earlier polls created (their ids are in Script Property `PULL_CONTINUATION_TRIGGERS`); the 5-minute trigger is never touched.
 - Lists the Inbox (trashed files skipped). Files named `<runId>__<name>` are grouped by runId.
 - Files older than 3 days that belong to no manifest are trashed. A runId whose data files never got a manifest is logged `INCOMPLETE` (`no manifest after 3 days; N file(s) trashed`); files without a runId prefix are trashed without a log row. Younger files stay (an upload may be in progress).
-- Script Property `LAST_PROCESSED_RUN` holds the runId of the last run that ended (committed or failed). Manifests with a runId up to it are never processed again; their files are trashed, and an older run that was never processed is logged `SUPERSEDED`. Of the newer manifests the oldest is processed (runIds sort chronologically), one run per poll.
+- Script Property `LAST_PROCESSED_RUN` holds the runId of the last run that ended (committed or failed). Manifests with a runId up to it are never processed again; their files are trashed (data files first, the manifest only once every data file is gone, so leftovers never turn into manifest-less `INCOMPLETE` files). An older run is logged `SUPERSEDED` (`older run superseded by <last>; files trashed`) once all its files are trashed, so the row is written once per runId; the last committed run is never logged `SUPERSEDED`. Of the newer manifests the oldest is processed (runIds sort chronologically), one run per poll.
+- R57: when a manifest of that oldest run is younger than 2 minutes (Drive listings can lag behind uploads), the poll returns `waiting` and leaves it for a later poll; a newer run is never processed ahead of it. Such a poll does not count toward R56.
+- Script Property `LAST_COMMITTED_RUN` is set by the commit itself right after the swap. A pending run equal to it was committed by a poll that was killed before `LAST_PROCESSED_RUN` was set: the poll only finishes the bookkeeping (`LAST_PROCESSED_RUN`, trash the files); the run is never staged, committed or failed again.
+- A late `failed` manifest for the run in `LAST_COMMITTED_RUN` (the cloud run saw an upload error after its ready manifest had landed) writes one `INFO` row `cloud run reported failure after data was committed: <reason>` (once per runId, Script Property `LAST_LATE_FAILURE_RUN`); the live data stays. A late `failed` manifest for a run that failed is trashed without a row.
+- R56 (stalled runs): before any other work on a run, each poll persists Script Property `PULL_PROGRESS` = `{runId, polls, stagedTotal}` (the sum of the staged rows in ACTIVE_RUN; `polls` counts the polls that started at the same total). Apps Script can kill an execution at 6 minutes without running any catch or later code, so such a poll still counts. When the staged total has not grown for 3 polls in a row, the next poll fails the run (`FAILED`, `no progress after 3 polls`, the fail path below, `LAST_PROCESSED_RUN` set). A commit-only poll (everything staged) counts as progress only by committing, so a run whose commit is killed on every poll also fails after 3 polls. The counter is cleared when the run ends.
 - A runId more than a day ahead of the clock is logged `FAILED` (`runId is in the future`) once (Script Property `LAST_FUTURE_RUN`) and its files are trashed. It never moves `LAST_PROCESSED_RUN`; errors on this path are handled like errors outside a run.
 - Manifest copies (Drive create retries are not idempotent, R46): if any copy is `failed`, the failed one wins; unreadable or differing ready copies fail the run.
 - `failed` manifest: the fail action logs one `FAILED` row with the manifest's `reason` (Started = manifest `startedAt`); `LAST_PROCESSED_RUN` is set and every `<runId>__*` file is trashed (also data files uploaded before the failure). `health` and `baseYear` may be null there.
@@ -64,6 +68,9 @@ Time-driven every 15 minutes (`installPullTrigger`), plus one-off continuation t
 
 ## Protocol (web app actions, no longer used by the nightly run)
 
+Not deployed: spike S2 failed (domain policy forbids ANYONE web app access), `appsscript.json` has no `webapp` block (R55). The code stays because the puller reuses the handlers.
+
+
 All requests are JSON POSTs with `token`.
 - `begin`: `runId`, `startedAt` (ISO, the CLI run start), `baseYear`, per-feed `{feed, tab, headers, types, rowCount}`, `health`. Sets the spreadsheet locale to `en_US` if it differs. If another run is active (different `runId`) it is logged as `ABANDONED` (`replaced by <runId>`) and its leftovers are removed.
 - `chunk`: `runId`, `feed`, increasing `seq`, `rowsB64Gzip`.
@@ -74,7 +81,7 @@ All requests are JSON POSTs with `token`.
 
 - `B1` (last successful refresh) is an ISO UTC timestamp; `B2` the base year.
 - Rows from row 5, newest first: Run ID, Started, Finished, Feed, Rows, Source Refreshed At, Status, Message. Started and Finished are Europe/Berlin `yyyy-MM-dd HH:mm:ss` (R36); Started is the CLI run start (`startedAt` of the manifest).
-- Status values: `OK`, `FAILED` (also puller problems outside a run: empty Run ID, message `inbox: ...`), `RETRY` (puller attempt 1 or 2 of a run failed unexpectedly; retried), `SUPERSEDED` (an older Inbox run skipped because a newer one was processed), `INCOMPLETE` (Inbox data files without a manifest after 3 days, trashed), `ABANDONED` (replaced by a later `begin`), `NO_REFRESH` (watchdog: `B1` missing or not today's Berlin date).
+- Status values: `OK`, `FAILED` (also puller problems outside a run: empty Run ID, message `inbox: ...`; a stalled run: `no progress after 3 polls`), `RETRY` (puller attempt 1 or 2 of a run failed unexpectedly; retried), `SUPERSEDED` (`older run superseded by <last>`: an older Inbox run's files were trashed because a newer run was already processed), `INFO` (`cloud run reported failure after data was committed: <reason>`: a late failed manifest for the committed run; the data stays), `INCOMPLETE` (Inbox data files without a manifest after 3 days, trashed), `ABANDONED` (replaced by a later `begin`), `NO_REFRESH` (watchdog: `B1` missing or not today's Berlin date).
 
 ## Safety rules
 
