@@ -1,7 +1,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { loadManifest } from './lib/manifest.mjs';
+import { loadManifest, sqlColumnsFor } from './lib/manifest.mjs';
+import { shapeFeed } from './lib/shape.mjs';
+import { chunkRows, postJson } from './lib/push.mjs';
 import { parseConnectorResult } from './lib/result.mjs';
 import { renderFeedSql, buildCountSql, buildPageSql, nextLimit, shrinkLimit } from './lib/sql.mjs';
 import { berlinRunId, loadState, saveState, newestCaptureAfter, runsDir, currentRunId } from './lib/state.mjs';
@@ -164,19 +166,126 @@ export function next({ root }) {
   return runSql(state.pendingSql);
 }
 
-const commands = { begin: (root) => begin({ root }), next: (root) => next({ root }) };
+function readPageRows(root, runId, page) {
+  const file = path.join(runsDir(root), runId, 'captures', `${String(page.captureSeq).padStart(4, '0')}.json`);
+  const cap = JSON.parse(fs.readFileSync(file, 'utf8'));
+  return parseConnectorResult(cap.response).rows;
+}
+
+function endRun(root, state, phase, failure) {
+  state.phase = phase;
+  state.failure = failure ?? null;
+  saveState(root, state);
+  fs.rmSync(path.join(runsDir(root), 'CURRENT'), { force: true });
+}
+
+function webappConfig(env) {
+  const url = env.MASTERDATA_WEBAPP_URL;
+  const token = env.MASTERDATA_TOKEN;
+  return url && token ? { url, token } : null;
+}
+
+const MISSING_ENV = 'FAILED missing MASTERDATA_WEBAPP_URL or MASTERDATA_TOKEN';
+
+// Re-reads every feed's captured pages, checks them against the fetch-time counts, and shapes them.
+function prepareFeeds(root, state, manifest) {
+  return state.done.map((d) => {
+    const feedDef = manifest.feeds.find((f) => f.feed === d.feed);
+    if (!feedDef) throw new Error(`${d.feed}: not in manifest`);
+    const sum = d.pages.reduce((s, p) => s + p.rows, 0);
+    if (sum !== d.expected.rowCount) throw new Error(`${d.feed}: pages hold ${sum} rows, expected ${d.expected.rowCount}`);
+    const raw = [];
+    const seen = new Set();
+    for (const page of d.pages) {
+      const rows = readPageRows(root, state.runId, page);
+      if (rows.length !== page.rows) throw new Error(`${d.feed}: capture ${page.captureSeq} holds ${rows.length} rows, expected ${page.rows}`);
+      for (const r of rows) {
+        if (seen.has(r[0])) throw new Error(`${d.feed}: duplicate ROW_KEY ${r[0]}`);
+        seen.add(r[0]);
+        raw.push(r);
+      }
+    }
+    const shaped = shapeFeed(feedDef, state.baseYear, raw, sqlColumnsFor(feedDef));
+    return { feedDef, ...shaped };
+  });
+}
+
+async function bestEffortFail(post, runId, reason) {
+  try {
+    await post({ action: 'fail', runId, reason });
+    return '';
+  } catch (e) {
+    return `; fail notification also failed: ${e && e.message ? e.message : e}`;
+  }
+}
+
+export async function finish({ root, env = process.env, fetchImpl, sleep }) {
+  const cfg = webappConfig(env);
+  if (!cfg) return MISSING_ENV;
+  const state = loadState(root);
+  if (state.phase !== 'fetched') return `FAILED run is not fetched (phase ${state.phase})`;
+  const opts = { fetchImpl, sleep };
+  const post = (body) => postJson(cfg.url, { token: cfg.token, ...body }, opts);
+  const runId = state.runId;
+  try {
+    const manifest = loadManifest(path.join(root, 'sql', 'feeds.json'));
+    const feeds = prepareFeeds(root, state, manifest);
+    await post({
+      action: 'begin',
+      runId,
+      baseYear: state.baseYear,
+      feeds: feeds.map((f) => ({ feed: f.feedDef.feed, tab: f.feedDef.tab, headers: f.headers, types: f.types, rowCount: f.rows.length })),
+      health: state.health,
+    });
+    for (const f of feeds) {
+      const chunks = chunkRows(f.rows);
+      for (let i = 0; i < chunks.length; i++) {
+        await post({ action: 'chunk', runId, feed: f.feedDef.feed, seq: i + 1, rowsB64Gzip: chunks[i] });
+      }
+    }
+    const res = await post({ action: 'commit', runId });
+    endRun(root, state, 'pushed');
+    const counts = feeds.map((f) => `${f.feedDef.feed}=${f.rows.length}`).join(' ');
+    return res.warning ? `DONE ${counts} WARNING ${res.warning}` : `DONE ${counts}`;
+  } catch (e) {
+    const message = e && e.message ? e.message : String(e);
+    const extra = await bestEffortFail(post, runId, message);
+    endRun(root, state, 'failed', message);
+    return `FAILED ${message}${extra}`;
+  }
+}
+
+export async function fail({ root, reason, env = process.env, fetchImpl, sleep }) {
+  const cfg = webappConfig(env);
+  if (!cfg) return MISSING_ENV;
+  const state = loadState(root);
+  const msg = reason || 'failed';
+  const post = (body) => postJson(cfg.url, { token: cfg.token, ...body }, { fetchImpl, sleep });
+  const extra = await bestEffortFail(post, state.runId, msg);
+  endRun(root, state, 'failed', msg);
+  return `FAILED ${msg}${extra}`;
+}
+
+const commands = {
+  begin: (root) => begin({ root }),
+  next: (root) => next({ root }),
+  finish: (root) => finish({ root }),
+  fail: (root, args) => fail({ root, reason: args.join(' ') }),
+};
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  const cmd = commands[process.argv[2]];
+  const name = process.argv[2];
+  const cmd = commands[name];
   if (!cmd) {
     console.error(`usage: cli.mjs <${Object.keys(commands).join('|')}>`);
     process.exit(2);
   }
   let out;
   try {
-    out = cmd(process.cwd());
+    out = await cmd(process.cwd(), process.argv.slice(3));
   } catch (e) {
-    out = `ABORT ${e && e.message ? e.message : e}`;
+    out = `${name === 'finish' || name === 'fail' ? 'FAILED' : 'ABORT'} ${e && e.message ? e.message : e}`;
   }
   console.log(out);
+  if (out.startsWith('FAILED')) process.exitCode = 1;
 }
