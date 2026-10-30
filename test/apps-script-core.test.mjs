@@ -65,9 +65,9 @@ test('toCsv_ without headers and without rows', () => {
   assert.strictEqual(c.toCsv_(null, [['0402', 0, undefined]]), '0402,0,\n');
 });
 
-test('columnFormats_ maps manifest types to number formats', () => {
+test('columnFormats_ maps manifest types to number formats (R22: numbers General)', () => {
   const c = load();
-  assert.deepStrictEqual(plain(c.columnFormats_(['string', 'date', 'number', 'boolean'])), ['@', 'yyyy-mm-dd', '0.######', 'General']);
+  assert.deepStrictEqual(plain(c.columnFormats_(['string', 'date', 'number', 'boolean'])), ['@', 'yyyy-mm-dd', 'General', 'General']);
 });
 
 test('isExpiredSnapshotFolder_ keeps 30 days, ignores non-date names', () => {
@@ -113,25 +113,30 @@ test('snapshotDate_ and part file names follow R21', () => {
   assert.strictEqual(c.partSeq_('components.part0001.csv', null), 1);
 });
 
+const TABS = ['Components', 'Multisource', 'Multisource_Members', 'Component_Usage', 'Products', 'MECL_Price'];
+
 test('validateBegin_ accepts a well-formed begin and rejects bad ones', () => {
   const c = load();
-  const ok = {
-    runId: '2026-10-30T07-00-03',
-    baseYear: 2026,
-    feeds: [{ feed: 'products', tab: 'Products', headers: ['Product ID', 'SOP'], types: ['number', 'date'], rowCount: 5 }],
-  };
+  const feeds = TABS.map((tab) => ({ feed: tab.toLowerCase(), tab, headers: ['ID', 'SOP'], types: ['number', 'date'], rowCount: 5 }));
+  const ok = { runId: '2026-10-30T07-00-03', baseYear: 2026, feeds };
   assert.strictEqual(c.validateBegin_(ok), null);
   const bad = (patch) => c.validateBegin_({ ...ok, ...patch });
-  const badFeed = (patch) => c.validateBegin_({ ...ok, feeds: [{ ...ok.feeds[0], ...patch }] });
+  const badFeed = (patch) => c.validateBegin_({ ...ok, feeds: [{ ...feeds[0], ...patch }, ...feeds.slice(1)] });
   assert.ok(bad({ runId: 'yesterday' }));
+  assert.ok(bad({ runId: '2026-02-30T07-00-03' }));
   assert.ok(bad({ baseYear: '2026' }));
-  assert.ok(bad({ feeds: [] }));
-  assert.ok(badFeed({ tab: '_Refresh_Log' }));
   assert.ok(badFeed({ feed: '../x' }));
   assert.ok(badFeed({ types: ['number'] }));
   assert.ok(badFeed({ types: ['number', 'text'] }));
   assert.ok(badFeed({ rowCount: -1 }));
-  assert.ok(bad({ feeds: [ok.feeds[0], ok.feeds[0]] }));
+  assert.ok(badFeed({ feed: feeds[1].feed }), 'duplicate feed name');
+  // Every tab in TABS exactly once.
+  const everyTab = 'begin must list every tab';
+  assert.strictEqual(bad({ feeds: [] }), everyTab);
+  assert.strictEqual(bad({ feeds: feeds.slice(1) }), everyTab);
+  assert.strictEqual(bad({ feeds: [...feeds, { ...feeds[0], feed: 'extra' }] }), everyTab);
+  assert.strictEqual(badFeed({ tab: '_Refresh_Log' }), everyTab);
+  assert.strictEqual(badFeed({ tab: 'Products' }), everyTab, 'duplicate tab');
 });
 
 test('validateRows_ checks shape and cell types', () => {

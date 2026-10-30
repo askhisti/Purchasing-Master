@@ -40,10 +40,42 @@ class FakeRange {
       op: 'setNumberFormats', sheet: this.sheet.name, row: this.row, col: this.col, numRows: this.numRows, numCols: this.numCols,
       formats: Array.from(formats, (r) => [...r]), // copy out of the vm realm
     });
-    formats.forEach((r, i) => r.forEach((f, j) => { this.sheet.formats[`${this.row + i},${this.col + j}`] = f; }));
+    formats.forEach((r, i) => r.forEach((f, j) => this.sheet.setFormat(this.row + i, this.col + j, f)));
     return this;
   }
   setNumberFormat(f) { return this.setNumberFormats(Array.from({ length: this.numRows }, () => Array(this.numCols).fill(f))); }
+  getNumberFormats() {
+    return Array.from({ length: this.numRows }, (_, i) => Array.from({ length: this.numCols }, (_, j) => this.sheet.getFormat(this.row + i, this.col + j)));
+  }
+  each(fn) {
+    for (let i = 0; i < this.numRows; i++) for (let j = 0; j < this.numCols; j++) fn(this.row + i, this.col + j, i, j);
+  }
+  // Real Range API names are singular (clearContent/clearFormat); Sheet has the plural ones.
+  clearContent() {
+    this.sheet.ss.calls.push({ op: 'clearContent', sheet: this.sheet.name, row: this.row, col: this.col, numRows: this.numRows, numCols: this.numCols });
+    this.each((r, c) => { if (this.sheet.rows[r - 1]) this.sheet.rows[r - 1][c - 1] = undefined; });
+    return this;
+  }
+  clearFormat() {
+    this.sheet.ss.calls.push({ op: 'clearFormat', sheet: this.sheet.name, row: this.row, col: this.col, numRows: this.numRows, numCols: this.numCols });
+    this.each((r, c) => this.sheet.setFormat(r, c, undefined));
+    return this;
+  }
+  clear() { this.clearContent(); return this.clearFormat(); }
+  // Copies values and number formats; the destination's top-left cell anchors the block.
+  // Assumption: the destination grid must already be large enough (the code grows it explicitly).
+  copyTo(dest) {
+    if (dest.sheet.ss !== this.sheet.ss) throw new Error('copyTo: target range must be in the same spreadsheet');
+    const values = this.getValues();
+    const formats = this.getNumberFormats();
+    const target = dest.sheet.getRange(dest.row, dest.col, this.numRows, this.numCols); // throws if outside the grid
+    this.sheet.ss.calls.push({ op: 'copyTo', sheet: this.sheet.name, to: dest.sheet.name, numRows: this.numRows, numCols: this.numCols });
+    target.each((r, c, i, j) => {
+      dest.sheet.setCell(r, c, values[i][j]);
+      dest.sheet.setFormat(r, c, formats[i][j]);
+    });
+    return this;
+  }
 }
 
 class FakeSheet {
@@ -51,12 +83,23 @@ class FakeSheet {
     this.ss = ss;
     this.name = name;
     this.hidden = false;
+    this.id = ++ss.nextId;
     this.rows = []; // rows[r-1][c-1]
-    this.formats = {};
+    this.fmts = []; // fmts[r-1][c-1], undefined = never set / cleared
     this.maxRows = DEFAULT_ROWS;
     this.maxCols = DEFAULT_COLS;
   }
   getName() { return this.name; }
+  getSheetId() { return this.id; }
+  setFormat(r, c, f) {
+    while (this.fmts.length < r) this.fmts.push(undefined);
+    if (!this.fmts[r - 1]) this.fmts[r - 1] = [];
+    this.fmts[r - 1][c - 1] = f;
+  }
+  getFormat(r, c) {
+    const row = this.fmts[r - 1];
+    return row ? row[c - 1] : undefined;
+  }
   setName(n) {
     if (this.ss.sheets.some((s) => s !== this && s.name === n)) throw new Error(`A sheet with the name "${n}" already exists.`);
     this.name = n;
@@ -73,19 +116,29 @@ class FakeSheet {
   getMaxColumns() { return this.maxCols; }
   insertRowsAfter(after, n) {
     if (after < 1 || after > this.maxRows) throw new Error('insertRowsAfter: position out of range');
-    this.rows.splice(after, 0, ...Array.from({ length: n }, () => undefined));
+    // Inserted rows shift existing values and formats down.
+    for (const grid of [this.rows, this.fmts]) {
+      while (grid.length < after) grid.push(undefined);
+      grid.splice(after, 0, ...Array.from({ length: n }, () => undefined));
+    }
     this.maxRows += n;
     return this;
   }
   insertRowsBefore(before, n) {
     if (before < 1 || before > this.maxRows) throw new Error('insertRowsBefore: position out of range');
-    this.rows.splice(before - 1, 0, ...Array.from({ length: n }, () => undefined));
+    for (const grid of [this.rows, this.fmts]) {
+      while (grid.length < before - 1) grid.push(undefined);
+      grid.splice(before - 1, 0, ...Array.from({ length: n }, () => undefined));
+    }
     this.maxRows += n;
     return this;
   }
   insertColumnsAfter(after, n) {
     if (after < 1 || after > this.maxCols) throw new Error('insertColumnsAfter: position out of range');
-    this.maxCols += n; // fakes only append-shape usage
+    for (const grid of [this.rows, this.fmts]) {
+      for (const row of grid) if (row && row.length > after) row.splice(after, 0, ...Array(n).fill(undefined));
+    }
+    this.maxCols += n;
     return this;
   }
   isEmpty(v) { return v === undefined || v === null || v === ''; }
@@ -129,6 +182,7 @@ export class FakeSpreadsheet {
     this.sheets = [];
     this.active = null;
     this.calls = [];
+    this.nextId = 0;
   }
   getSheets() { return [...this.sheets]; }
   getSheetByName(n) { return this.sheets.find((s) => s.name === n) || null; }
@@ -165,6 +219,7 @@ export class FakeSpreadsheet {
 class FakeFile {
   constructor(folder, name, content, mimeType) { Object.assign(this, { folder, name, content, mimeType, trashed: false }); }
   getName() { return this.name; }
+  setName(n) { this.name = n; return this; }
   getMimeType() { return this.mimeType; }
   getBlob() { return makeBlob(Buffer.from(this.content, 'utf8'), this.mimeType); }
   setTrashed(t) { this.trashed = t; return this; }

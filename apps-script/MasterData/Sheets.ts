@@ -52,19 +52,38 @@ function appendStagedRows_(ss, tab, startRow, rows, formats) {
   writeBlock_(sheet, startRow, rows, formats);
 }
 
-// Swap = delete the live tab if present, rename staging to live, show it; then order tabs.
-function swapStagingToLive_(ss, tabs) {
-  tabs.forEach(function (tab) {
-    if (!ss.getSheetByName(stagingName_(tab))) throw new Error('staging tab missing for ' + tab);
+// R23: swap keeps each live tab's identity (gid links, formulas, filters survive).
+// items: [{tab, rows, cols}] = the staged extent (header + data rows, header width).
+// Live tab missing: the staging tab is renamed and shown. Otherwise the staged block (values + formats)
+// is copied onto the live tab, leftovers below/right of it are cleared, and the staging tab is deleted.
+function swapStagingToLive_(ss, items) {
+  items.forEach(function (it) {
+    if (!ss.getSheetByName(stagingName_(it.tab))) throw new Error('staging tab missing for ' + it.tab);
   });
-  tabs.forEach(function (tab) {
-    var staging = ss.getSheetByName(stagingName_(tab));
-    var live = ss.getSheetByName(tab);
-    if (live) ss.deleteSheet(live);
-    staging.setName(tab);
-    staging.showSheet();
+  items.forEach(function (it) {
+    var staging = ss.getSheetByName(stagingName_(it.tab));
+    var live = ss.getSheetByName(it.tab);
+    if (!live) {
+      staging.setName(it.tab);
+      staging.showSheet();
+      return;
+    }
+    var r = it.rows;
+    var c = it.cols;
+    ensureSize_(live, r, c);
+    staging.getRange(1, 1, r, c).copyTo(live.getRange(1, 1));
+    var maxRows = live.getMaxRows();
+    var maxCols = live.getMaxColumns();
+    if (maxRows > r) clearBlock_(live.getRange(r + 1, 1, maxRows - r, maxCols));
+    if (maxCols > c) clearBlock_(live.getRange(1, c + 1, r, maxCols - c));
+    ss.deleteSheet(staging);
   });
   orderTabs_(ss);
+}
+
+function clearBlock_(range) {
+  range.clearContent();
+  range.clearFormat();
 }
 
 // Live tabs in TABS order, then _Refresh_Log, then any other sheets in their existing order.

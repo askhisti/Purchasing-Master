@@ -1,6 +1,7 @@
 // Pure functions (no Apps Script services). Plain JavaScript syntax so Node vm can load this file in tests.
 
-var CORE_COLUMN_FORMATS_ = { string: '@', date: 'yyyy-mm-dd', number: '0.######', boolean: 'General' };
+// R22: numbers use 'General' ('0.######' renders integers as "1000." and consumers read display values).
+var CORE_COLUMN_FORMATS_ = { string: '@', date: 'yyyy-mm-dd', number: 'General', boolean: 'General' };
 
 // Message naming every feed whose row count fell by more than maxDrop versus prev, or null.
 function checkRowDrop_(prev, next, maxDrop) {
@@ -94,25 +95,29 @@ function partSeq_(name, feed) {
   return Number(m[2]);
 }
 
+// runId format YYYY-MM-DDTHH-mm-ss (Berlin) with a real calendar date.
+function isRunId_(runId) {
+  return typeof runId === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}$/.test(runId) && dayNumber_(runId.slice(0, 10)) !== null;
+}
+
 function isNonNegInt_(n) {
   return typeof n === 'number' && isFinite(n) && Math.floor(n) === n && n >= 0;
 }
 
-// Error message for a malformed begin request, else null.
+// Error message for a malformed begin request, else null. A begin must list every tab in TABS exactly once.
 function validateBegin_(req) {
-  if (typeof req.runId !== 'string' || !/^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}$/.test(req.runId) || dayNumber_(req.runId.slice(0, 10)) === null) {
-    return 'bad runId';
-  }
+  var everyTab = 'begin must list every tab';
+  if (!isRunId_(req.runId)) return 'bad runId';
   if (!isNonNegInt_(req.baseYear)) return 'bad baseYear';
-  if (!Array.isArray(req.feeds) || !req.feeds.length) return 'no feeds';
+  if (!Array.isArray(req.feeds) || req.feeds.length !== MASTERDATA_CONFIG.TABS.length) return everyTab;
   var seenFeeds = {};
   var seenTabs = {};
   for (var i = 0; i < req.feeds.length; i++) {
     var f = req.feeds[i];
     if (!f || typeof f !== 'object') return 'bad feed';
     if (typeof f.feed !== 'string' || !/^[A-Za-z0-9_]+$/.test(f.feed)) return 'bad feed name';
-    if (MASTERDATA_CONFIG.TABS.indexOf(f.tab) < 0) return f.feed + ': unknown tab';
-    if (seenFeeds[f.feed] || seenTabs[f.tab]) return f.feed + ': duplicate feed or tab';
+    if (MASTERDATA_CONFIG.TABS.indexOf(f.tab) < 0 || seenTabs[f.tab]) return everyTab;
+    if (seenFeeds[f.feed]) return f.feed + ': duplicate feed';
     seenFeeds[f.feed] = true;
     seenTabs[f.tab] = true;
     if (!Array.isArray(f.headers) || !f.headers.length) return f.feed + ': no headers';

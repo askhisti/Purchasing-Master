@@ -50,10 +50,10 @@ function stagedCounts_(run) {
   });
 }
 
-// Removes everything a run left behind: staging tabs, its part files, ACTIVE_RUN.
+// Removes everything a run left behind: staging tabs, its part and .csv.tmp files, ACTIVE_RUN.
 function discardRun_(ss, run) {
   clearStagingTabs_(ss);
-  deletePartFiles_(run.date);
+  deleteRunFiles_(run.date);
   clearActiveRun_();
 }
 
@@ -67,8 +67,8 @@ function handleBegin_(req) {
   ensureLogSheet_(ss); // keeps a visible sheet so staging tabs can be hidden
   clearStagingTabs_(ss);
   var date = snapshotDate_(req.runId);
-  deletePartFiles_(date);
-  if (prev && prev.date && prev.date !== date) deletePartFiles_(prev.date);
+  deleteRunFiles_(date);
+  if (prev && prev.date && prev.date !== date) deleteRunFiles_(prev.date);
   var run = {
     runId: req.runId,
     date: date,
@@ -114,43 +114,32 @@ function handleChunk_(req) {
   return { ok: true, stagedRows: f.staged };
 }
 
-// {action:'commit', runId}. Validates every feed before touching live tabs.
+// {action:'commit', runId}. Everything that can reject the run happens before any live tab is touched.
 function handleCommit_(req) {
   var run = getActiveRun_();
   if (!run || run.runId !== req.runId) return notActiveRun_();
   var ss = spreadsheet_();
   var swapStarted = false;
+  var counts = {};
+  var prevCounts;
   try {
-    var counts = {};
     run.feeds.forEach(function (f) {
       if (f.staged !== f.rowCount) throw new Error(f.feed + ': staged ' + f.staged + ' rows, expected ' + f.rowCount);
       counts[f.feed] = f.staged;
     });
-    var prevCounts = getLastRowCounts_();
+    prevCounts = getLastRowCounts_();
     var drop = checkRowDrop_(prevCounts, counts, MASTERDATA_CONFIG.MAX_ROW_DROP);
     if (drop) throw new Error(drop);
     run.feeds.forEach(function (f) {
       assembleSnapshot_(run.date, f.feed, f.headers);
     });
     swapStarted = true;
-    swapStagingToLive_(ss, run.feeds.map(function (f) { return f.tab; }));
-    var merged = prevCounts || {};
-    Object.keys(counts).forEach(function (k) {
-      merged[k] = counts[k];
-    });
-    setLastRowCounts_(merged);
-    clearActiveRun_();
-    var warning = '';
-    try {
-      pruneSnapshots_(run.date);
-    } catch (pruneErr) {
-      warning = 'snapshot prune failed: ' + errorMessage_(pruneErr);
-    }
-    var finished = nowIso_();
-    var logRun = { runId: run.runId, started: run.started, finished: finished, sourceRefreshedAt: run.sourceRefreshedAt };
-    writeLogRows_(ss, logRows_(logRun, stagedCounts_(run), 'OK', warning));
-    setLastSuccess_(ss, finished, run.baseYear);
-    return { ok: true, feeds: stagedCounts_(run) };
+    swapStagingToLive_(
+      ss,
+      run.feeds.map(function (f) {
+        return { tab: f.tab, rows: 1 + f.staged, cols: f.headers.length };
+      })
+    );
   } catch (err) {
     var message = (swapStarted ? 'after swap started (live tabs may be updated): ' : '') + errorMessage_(err);
     try {
@@ -158,13 +147,53 @@ function handleCommit_(req) {
     } catch (cleanupErr) {
       message += '; cleanup failed: ' + errorMessage_(cleanupErr);
     }
-    var failRun = { runId: run.runId, started: run.started, finished: nowIso_(), sourceRefreshedAt: run.sourceRefreshedAt };
-    writeLogRows_(ss, logRows_(failRun, stagedCounts_(run), 'FAILED', message));
+    try {
+      var failRun = { runId: run.runId, started: run.started, finished: nowIso_(), sourceRefreshedAt: run.sourceRefreshedAt };
+      writeLogRows_(ss, logRows_(failRun, stagedCounts_(run), 'FAILED', message));
+    } catch (logErr) {
+      message += '; log write failed: ' + errorMessage_(logErr);
+    }
     return { ok: false, error: message };
   }
+  // Every live tab now holds this run: later problems are warnings, never a failed run.
+  var warnings = [];
+  var step = function (label, fn) {
+    try {
+      fn();
+    } catch (e) {
+      warnings.push(label + ': ' + errorMessage_(e));
+    }
+  };
+  step('clear active run', clearActiveRun_);
+  step('snapshot', function () {
+    run.feeds.forEach(function (f) {
+      promoteSnapshot_(run.date, f.feed);
+    });
+  });
+  step('row counts', function () {
+    var merged = prevCounts || {};
+    Object.keys(counts).forEach(function (k) {
+      merged[k] = counts[k];
+    });
+    setLastRowCounts_(merged);
+  });
+  step('snapshot prune', function () {
+    pruneSnapshots_(run.date);
+  });
+  var finished = nowIso_();
+  step('log', function () {
+    var logRun = { runId: run.runId, started: run.started, finished: finished, sourceRefreshedAt: run.sourceRefreshedAt };
+    writeLogRows_(ss, logRows_(logRun, stagedCounts_(run), 'OK', warnings.join('; ')));
+  });
+  step('last successful refresh', function () {
+    setLastSuccess_(ss, finished, run.baseYear);
+  });
+  if (warnings.length) return { ok: true, feeds: stagedCounts_(run), warning: warnings.join('; ') };
+  return { ok: true, feeds: stagedCounts_(run) };
 }
 
-// {action:'fail', runId, reason}. Always logged; cleans up only when runId is the active run (or none is active).
+// {action:'fail', runId, reason}. Always logged. Cleans up when runId is the active run, or when no run is
+// active (staging tabs plus that runId's date-folder part/.tmp files). Another active run is left alone.
 function handleFail_(req) {
   var ss = spreadsheet_();
   var run = getActiveRun_();
@@ -172,7 +201,10 @@ function handleFail_(req) {
   var reason = req.reason === undefined || req.reason === null ? 'failed' : String(req.reason);
   var active = !!run && run.runId === runId;
   if (active) discardRun_(ss, run);
-  else if (!run) clearStagingTabs_(ss);
+  else if (!run) {
+    clearStagingTabs_(ss);
+    if (isRunId_(runId)) deleteRunFiles_(snapshotDate_(runId));
+  }
   var logRun = {
     runId: runId,
     started: active ? run.started : '',

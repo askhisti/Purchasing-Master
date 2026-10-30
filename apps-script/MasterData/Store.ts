@@ -72,21 +72,30 @@ function listParts_(folder, feed) {
   return parts;
 }
 
-function deletePartFiles_(date) {
+// Trashes a run's working files in the date folder: part files and unpromoted <feed>.csv.tmp files.
+function deleteRunFiles_(date) {
   var folder = snapshotDateFolder_(date, false);
   if (!folder) return;
-  listParts_(folder, null).forEach(function (p) {
-    p.file.setTrashed(true);
-  });
+  var it = folder.getFiles();
+  while (it.hasNext()) {
+    var file = it.next();
+    if (file.isTrashed()) continue;
+    var name = file.getName();
+    if (partSeq_(name, null) !== null || /\.csv\.tmp$/.test(name)) file.setTrashed(true);
+  }
 }
 
-// Creates name in folder, trashing any existing files of the same name first.
-function replaceFile_(folder, name, content) {
+function trashFilesNamed_(folder, name) {
   var it = folder.getFilesByName(name);
   while (it.hasNext()) {
     var file = it.next();
     if (!file.isTrashed()) file.setTrashed(true);
   }
+}
+
+// Creates name in folder, trashing any existing files of the same name first.
+function replaceFile_(folder, name, content) {
+  trashFilesNamed_(folder, name);
   return folder.createFile(name, content, 'text/csv');
 }
 
@@ -94,7 +103,7 @@ function savePart_(date, feed, seq, csv) {
   replaceFile_(snapshotDateFolder_(date, true), partFileName_(feed, seq), csv);
 }
 
-// <feed>.csv = header + parts in seq order, replacing a same-date <feed>.csv; the parts are then trashed.
+// <feed>.csv.tmp = header + parts in seq order; the parts are then trashed. promoteSnapshot_ makes it <feed>.csv.
 function assembleSnapshot_(date, feed, headers) {
   var folder = snapshotDateFolder_(date, true);
   var parts = listParts_(folder, feed);
@@ -102,10 +111,26 @@ function assembleSnapshot_(date, feed, headers) {
   parts.forEach(function (p) {
     content += p.file.getBlob().getDataAsString('UTF-8');
   });
-  replaceFile_(folder, feed + '.csv', content);
+  replaceFile_(folder, feed + '.csv.tmp', content);
   parts.forEach(function (p) {
     p.file.setTrashed(true);
   });
+}
+
+// After a successful swap: <feed>.csv.tmp replaces a same-date <feed>.csv, so a failed run never overwrites a good snapshot.
+function promoteSnapshot_(date, feed) {
+  var folder = snapshotDateFolder_(date, false);
+  var tmp = null;
+  if (folder) {
+    var it = folder.getFilesByName(feed + '.csv.tmp');
+    while (it.hasNext() && !tmp) {
+      var file = it.next();
+      if (!file.isTrashed()) tmp = file;
+    }
+  }
+  if (!tmp) throw new Error(feed + '.csv.tmp missing');
+  trashFilesNamed_(folder, feed + '.csv');
+  tmp.setName(feed + '.csv');
 }
 
 // Trashes date folders older than RETENTION_DAYS before today (YYYY-MM-DD). Returns their names.
