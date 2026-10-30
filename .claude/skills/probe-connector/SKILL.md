@@ -58,4 +58,4 @@ Print the output verbatim. A row where `parse` is FAIL means the response was tr
 
 ## 4. Report
 
-Reply with the printed table and nothing else, plus the run id and any column substitutions.
+Reply with the printed table and nothing else, plus the run id and any error rows.
