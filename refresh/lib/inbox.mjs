@@ -35,6 +35,16 @@ function multipartBody(meta, file) {
   return { body, contentType: `multipart/related; boundary=${boundary}` };
 }
 
+const RATE_LIMIT_REASONS = ['rateLimitExceeded', 'userRateLimitExceeded'];
+
+// R57: 5xx, 429, and 403 whose Google error JSON names a rate-limit reason (error.errors[].reason) are retried.
+export function retryableStatus(status, json) {
+  if (status >= 500 || status === 429) return true;
+  if (status !== 403) return false;
+  const errors = json && json.error && Array.isArray(json.error.errors) ? json.error.errors : [];
+  return errors.some((e) => e && RATE_LIMIT_REASONS.includes(e.reason));
+}
+
 async function uploadOne({ folderId, file, token, fetchImpl, sleep, delays }) {
   const { body, contentType } = multipartBody({ name: file.name, parents: [folderId], mimeType: file.mimeType }, file);
   let lastErr;
@@ -64,7 +74,7 @@ async function uploadOne({ folderId, file, token, fetchImpl, sleep, delays }) {
     }
     const detail = json && json.error && json.error.message ? ` ${String(json.error.message).slice(0, 300)}` : '';
     const err = new Error(`${file.name}: upload failed: HTTP ${res.status}${detail}`);
-    if (res.status >= 500) {
+    if (retryableStatus(res.status, json)) {
       lastErr = err;
       continue;
     }
@@ -73,7 +83,7 @@ async function uploadOne({ folderId, file, token, fetchImpl, sleep, delays }) {
   throw lastErr;
 }
 
-// One multipart upload per file, in list order. Retries network errors and 5xx (5 s, 20 s).
+// One multipart upload per file, in list order. Retries network errors, 5xx, 429 and rate-limit 403s (5 s, 20 s).
 export async function uploadToInbox({ folderId, files, token, fetchImpl = fetch, sleep = defaultSleep, delays = [5000, 20000] }) {
   for (const f of files) {
     if (f.bytes.length > MAX_FILE_BYTES) throw new Error(`${f.name} is ${f.bytes.length} bytes, over the 5 MB multipart upload limit`);

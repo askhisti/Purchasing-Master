@@ -227,7 +227,7 @@ function inboxFolderId(env) {
 }
 
 async function uploadFiles({ env, files, fetchImpl, sleep, now }) {
-  const token = await getAccessToken({ keyJson: env.MASTERDATA_SA_KEY, scope: DRIVE_SCOPE, fetchImpl, now });
+  const token = await getAccessToken({ keyJson: env.MASTERDATA_SA_KEY, scope: DRIVE_SCOPE, fetchImpl, sleep, now });
   return uploadToInbox({ folderId: inboxFolderId(env), files, token, fetchImpl, sleep });
 }
 

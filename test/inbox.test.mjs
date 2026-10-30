@@ -226,3 +226,42 @@ test('the key, the assertion and the access token never appear in stdout or thro
     assert.ok(!/eyJ[A-Za-z0-9_-]{20,}\./.test(text), 'no JWT in output');
   }
 });
+
+test('item 1: finish retries a failed token request with the injected sleep', async () => {
+  const sleeps = [];
+  const g = fakeGoogle({ tokenStatus: (n) => (n === 1 ? 503 : 200) });
+  const out = await finish({ root: makeRun(), env, fetchImpl: g.fetchImpl, sleep: async (ms) => sleeps.push(ms), now: () => Date.parse('2026-10-30T02:05:00Z') });
+  assert.equal(out, `DONE uploaded ${RUN_ID} fa=3 fb=0`);
+  assert.deepEqual(sleeps, [5000]);
+});
+
+const rateLimited = (status, reason) => ({
+  status,
+  body: JSON.stringify({ error: { code: status, message: 'Rate Limit Exceeded', errors: [{ domain: 'usageLimits', reason, message: 'Rate Limit Exceeded' }] } }),
+});
+
+test('R57: uploads retry 429 and 403 rateLimitExceeded / userRateLimitExceeded like 5xx', async () => {
+  const { files } = buildPayload(state, []);
+  for (const first of [{ status: 429, body: '' }, rateLimited(429, 'rateLimitExceeded'), rateLimited(403, 'rateLimitExceeded'), rateLimited(403, 'userRateLimitExceeded')]) {
+    const sleeps = [];
+    const g = fakeGoogle({ uploadStatus: (_, n) => (n === 1 ? first : 200) });
+    const { ids } = await uploadToInbox({ folderId: FOLDER, files, token: 't', fetchImpl: g.fetchImpl, sleep: async (ms) => sleeps.push(ms) });
+    assert.deepEqual(ids, ['id-2'], JSON.stringify(first));
+    assert.deepEqual(sleeps, [5000]);
+  }
+  const g = fakeGoogle({ uploadStatus: () => rateLimited(403, 'userRateLimitExceeded') });
+  await assert.rejects(uploadToInbox({ folderId: FOLDER, files, token: 't', fetchImpl: g.fetchImpl, sleep: async () => {} }), /HTTP 403 Rate Limit Exceeded/);
+  assert.equal(g.uploads().length, 3);
+});
+
+test('R57: a 403 for any other reason (permissions, storage quota) is not retried', async () => {
+  const { files } = buildPayload(state, []);
+  for (const reason of ['insufficientFilePermissions', 'storageQuotaExceeded']) {
+    const g = fakeGoogle({ uploadStatus: () => rateLimited(403, reason) });
+    await assert.rejects(uploadToInbox({ folderId: FOLDER, files, token: 't', fetchImpl: g.fetchImpl, sleep: async () => {} }), /HTTP 403/);
+    assert.equal(g.uploads().length, 1, reason);
+  }
+  const g = fakeGoogle({ uploadStatus: () => ({ status: 403, body: 'not json' }) });
+  await assert.rejects(uploadToInbox({ folderId: FOLDER, files, token: 't', fetchImpl: g.fetchImpl, sleep: async () => {} }), /HTTP 403/);
+  assert.equal(g.uploads().length, 1);
+});

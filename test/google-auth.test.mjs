@@ -51,3 +51,37 @@ test('a private key that cannot sign fails without echoing it', async () => {
   assert.ok(!err.message.includes(KEY_MARKER));
   assert.equal(g.calls.length, 0);
 });
+
+test('R57/item 1: network errors, 5xx and 429 are retried after 5 s and 20 s (injectable sleep)', async () => {
+  const sleeps = [];
+  const sleep = async (ms) => { sleeps.push(ms); };
+  let g = fakeGoogle({ tokenStatus: (n) => (n === 1 ? 'throw' : n === 2 ? 503 : 200) });
+  assert.equal(await getAccessToken({ keyJson: KEY_JSON, scope: SCOPE, fetchImpl: g.fetchImpl, sleep }), ACCESS_TOKEN);
+  assert.equal(g.calls.length, 3);
+  assert.deepEqual(sleeps, [5000, 20000]);
+
+  sleeps.length = 0;
+  g = fakeGoogle({ tokenStatus: (n) => (n === 1 ? 429 : 200) });
+  assert.equal(await getAccessToken({ keyJson: KEY_JSON, scope: SCOPE, fetchImpl: g.fetchImpl, sleep }), ACCESS_TOKEN);
+  assert.equal(g.calls.length, 2);
+  assert.deepEqual(sleeps, [5000]);
+});
+
+test('item 1: the token request gives up after 3 attempts with the last error', async () => {
+  let g = fakeGoogle({ tokenStatus: () => 500 });
+  await assert.rejects(getAccessToken({ keyJson: KEY_JSON, scope: SCOPE, fetchImpl: g.fetchImpl, sleep: async () => {} }), /token request failed: HTTP 500/);
+  assert.equal(g.calls.length, 3);
+  g = fakeGoogle({ tokenStatus: () => 'throw' });
+  await assert.rejects(getAccessToken({ keyJson: KEY_JSON, scope: SCOPE, fetchImpl: g.fetchImpl, sleep: async () => {} }), /token request network error: .*ENOTFOUND/);
+  assert.equal(g.calls.length, 3);
+});
+
+test('item 1: other 4xx (400 invalid_grant, 401, 403) are never retried', async () => {
+  for (const status of [400, 401, 403]) {
+    const sleeps = [];
+    const g = fakeGoogle({ tokenStatus: () => status });
+    await assert.rejects(getAccessToken({ keyJson: KEY_JSON, scope: SCOPE, fetchImpl: g.fetchImpl, sleep: async (ms) => sleeps.push(ms) }), new RegExp(`HTTP ${status}`));
+    assert.equal(g.calls.length, 1, `HTTP ${status}`);
+    assert.deepEqual(sleeps, []);
+  }
+});
