@@ -6,9 +6,10 @@ const PLACEHOLDER = '{{BASE_YEAR}}';
 const MIN_LIMIT = 100;
 const MAX_LIMIT = 20000;
 
-// Snowflake string literal: a single quote is escaped by doubling it.
+// Snowflake string literal: backslash is an escape character inside single quotes,
+// so it is escaped first, then a single quote is escaped by doubling it.
 function quoteLiteral(value) {
-  return `'${String(value).replace(/'/g, "''")}'`;
+  return `'${String(value).replace(/\\/g, '\\\\').replace(/'/g, "''")}'`;
 }
 
 // Replace {{BASE_YEAR}} with the integer year. Any other placeholder is an error.
@@ -25,23 +26,31 @@ export function buildCountSql(feedSql) {
   return `SELECT COUNT(*) AS ROW_COUNT, COUNT(DISTINCT ROW_KEY) AS KEY_COUNT FROM (${feedSql})`;
 }
 
-// One keyset page of the feed, ordered by ROW_KEY, resuming after afterKey when given.
+// One keyset page of the feed, ordered by ROW_KEY, resuming after afterKey.
+// Callers pass null (not '') for the first page; null omits the WHERE clause.
 export function buildPageSql(feedSql, afterKey, limit) {
+  if (!Number.isInteger(limit) || limit <= 0) throw new Error(`limit must be a positive integer, got ${limit}`);
   const where = afterKey === null || afterKey === undefined ? '' : ` WHERE ROW_KEY > ${quoteLiteral(afterKey)}`;
   return `SELECT * FROM (${feedSql})${where} ORDER BY ROW_KEY LIMIT ${limit}`;
 }
 
 // Size the next page so it should return about `target` characters.
 // Average chars per row is observed from the last page; prevLimit is accepted for
-// signature stability and is not used by the formula.
+// signature stability and is not used by the formula. Returns MIN_LIMIT when the
+// observed ratio is unusable (no rows, or no characters per row).
 export function nextLimit(prevLimit, chars, rowsReturned, target = 250000) {
   const charsPerRow = chars / rowsReturned;
+  if (!Number.isFinite(charsPerRow) || charsPerRow <= 0) return MIN_LIMIT;
   const raw = Math.floor(target / charsPerRow);
+  if (!Number.isFinite(raw)) return MIN_LIMIT;
   return Math.min(MAX_LIMIT, Math.max(MIN_LIMIT, raw));
 }
 
 // Shrink the limit after a truncated page: scale by the fraction actually returned,
-// with a 0.8 safety factor, never below the minimum.
+// with a 0.8 safety factor, never below the minimum. Returns MIN_LIMIT when numRows
+// is 0 or the result is not finite.
 export function shrinkLimit(limit, rowsReturned, numRows) {
-  return Math.max(MIN_LIMIT, Math.floor((limit * rowsReturned) / numRows * 0.8));
+  const scaled = Math.floor((limit * rowsReturned) / numRows * 0.8);
+  if (!Number.isFinite(scaled)) return MIN_LIMIT;
+  return Math.max(MIN_LIMIT, scaled);
 }

@@ -41,6 +41,24 @@ test('buildPageSql with afterKey null has no WHERE', () => {
   assert.equal(sql, `SELECT * FROM (${FEED}) ORDER BY ROW_KEY LIMIT 500`);
 });
 
+test('buildPageSql escapes a backslash in afterKey', () => {
+  assert.ok(buildPageSql(FEED, 'A\\B', 10).includes(String.raw`ROW_KEY > 'A\\B'`));
+});
+
+test('buildPageSql: trailing backslash cannot escape the closing quote', () => {
+  assert.ok(buildPageSql(FEED, 'AB\\', 10).includes(String.raw`ROW_KEY > 'AB\\'`));
+});
+
+test('buildPageSql escapes backslash before quote', () => {
+  assert.ok(buildPageSql(FEED, "x\\'y", 10).includes(String.raw`ROW_KEY > 'x\\''y'`));
+});
+
+test('buildPageSql throws unless limit is a positive integer', () => {
+  for (const bad of [0, -1, 1.5, NaN, '10', undefined]) {
+    assert.throws(() => buildPageSql(FEED, null, bad), undefined, String(bad));
+  }
+});
+
 test('nextLimit sizes pages to the target character budget', () => {
   assert.equal(nextLimit(2000, 339594, 2137), 1573);
 });
@@ -53,10 +71,18 @@ test('nextLimit clamps to 100 at the bottom', () => {
   assert.equal(nextLimit(2000, 10000000, 1), 100);
 });
 
+test('nextLimit returns 100 (never NaN) when rowsReturned is 0', () => {
+  assert.equal(nextLimit(2000, 0, 0), 100);
+});
+
 test('shrinkLimit scales by returned/total with 0.8 safety factor', () => {
   assert.equal(shrinkLimit(5000, 2137, 5000), 1709);
 });
 
 test('shrinkLimit never goes below 100', () => {
   assert.equal(shrinkLimit(120, 1, 5000), 100);
+});
+
+test('shrinkLimit returns 100 (never NaN) when numRows is 0', () => {
+  assert.equal(shrinkLimit(5000, 0, 0), 100);
 });
