@@ -31,5 +31,7 @@ The `probe-connector` and `probe-webapp` skills in `.claude/skills/` stay until 
 
 ## USER steps (one-time)
 
-- [ ] Install the daily watchdog (R37), after the first release that contains `Watchdog.ts`: open the Apps Script editor of the MasterData sheet, select `installDailyWatchdogTrigger` and click Run once. Approve the new permission (`script.scriptapp`, "manage triggers") when prompted. Check under Triggers that exactly one `checkDailyRefresh` trigger exists (time-driven, day timer, 10:00 to 11:00, Europe/Berlin). Re-running it is safe: it replaces the existing `checkDailyRefresh` trigger.
-- Watchdog status: not installed.
+- [ ] Install the Inbox puller, after the first release that contains `Puller.ts`: open the Apps Script editor of the MasterData sheet, select `installPullTrigger` and click Run once. Approve the permissions when prompted (`script.scriptapp` "manage triggers", Drive). Check under Triggers that exactly one `pollInbox` trigger exists (time-driven, minutes timer, every 15 minutes). Re-running it is safe: it replaces the existing `pollInbox` trigger. The account that runs it needs Content manager (or Manager) on the shared drive `03_Master File from Snowflake`, so the puller can trash processed Inbox files.
+- [ ] Install the daily watchdog (R37, R43), in the same editor: select `installDailyWatchdogTrigger` and click Run once. Check under Triggers that exactly one `checkDailyRefresh` trigger exists (time-driven, day timer, 08:00 to 09:00, Europe/Berlin; it fires near 08:15). Re-running it is safe: it replaces the existing `checkDailyRefresh` trigger (also one installed earlier at 10:00).
+- Puller status: not installed.
+- Watchdog status: not installed (08:15).

@@ -1,6 +1,6 @@
 // R37 daily watchdog. Plain JavaScript syntax so Node vm can load this file in tests.
 
-// Time-driven (daily, 10:00 Europe/Berlin): logs NO_REFRESH when _Refresh_Log B1 (last successful
+// Time-driven (daily, 08:15 Europe/Berlin): logs NO_REFRESH when _Refresh_Log B1 (last successful
 // refresh, ISO UTC) is missing or not today's Berlin date.
 function checkDailyRefresh() {
   return withScriptLock_(function () {
@@ -13,17 +13,23 @@ function checkDailyRefresh() {
   });
 }
 
-// Run once from the Apps Script editor (USER step). Replaces any checkDailyRefresh trigger with one
-// daily trigger at WATCHDOG_HOUR in TIME_ZONE (= appsscript.json timeZone).
-function installDailyWatchdogTrigger() {
-  var handler = MASTERDATA_CONFIG.WATCHDOG_HANDLER;
+// Deletes every project trigger that runs handler.
+function deleteTriggersFor_(handler) {
   ScriptApp.getProjectTriggers().forEach(function (t) {
     if (t.getHandlerFunction() === handler) ScriptApp.deleteTrigger(t);
   });
+}
+
+// Run once from the Apps Script editor (USER step). Replaces any checkDailyRefresh trigger with one
+// daily trigger at WATCHDOG_HOUR:WATCHDOG_MINUTE in TIME_ZONE (= appsscript.json timeZone).
+function installDailyWatchdogTrigger() {
+  var handler = MASTERDATA_CONFIG.WATCHDOG_HANDLER;
+  deleteTriggersFor_(handler);
   return ScriptApp.newTrigger(handler)
     .timeBased()
     .everyDays(1)
     .atHour(MASTERDATA_CONFIG.WATCHDOG_HOUR)
+    .nearMinute(MASTERDATA_CONFIG.WATCHDOG_MINUTE)
     .inTimezone(MASTERDATA_CONFIG.TIME_ZONE)
     .create();
 }

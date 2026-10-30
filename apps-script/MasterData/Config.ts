@@ -17,7 +17,25 @@ var MASTERDATA_CONFIG = {
   // Empty default sheets removed after a successful commit.
   DEFAULT_SHEET_NAMES: ['Sheet1', 'Tabelle1'],
   WATCHDOG_HANDLER: 'checkDailyRefresh',
-  WATCHDOG_HOUR: 10,
+  // R43: daily at 08:15 Berlin (nearMinute: Apps Script runs it within +-15 minutes).
+  WATCHDOG_HOUR: 8,
+  WATCHDOG_MINUTE: 15,
+  // Drive Inbox (03_Master File from Snowflake/Inbox, shared drive): the nightly run uploads
+  // <runId>__<feed>.json.gz files and <runId>__manifest.json last; pollInbox pulls them.
+  INBOX_FOLDER_ID: '1PE6IcZqJFHM7ISA4XKNHpifk8oCVyqdV',
+  PULL_HANDLER: 'pollInbox',
+  PULL_EVERY_MINUTES: 15,
+  // tryLock wait; a busy lock means another execution is working, so the poll exits.
+  PULL_LOCK_WAIT_MS: 5000,
+  // Rows per staging write, and the time after which a poll stops (Apps Script kills executions at 6 min).
+  PULL_SLICE_ROWS: 4000,
+  PULL_BUDGET_MS: 270000,
+  // Inbox files that belong to no manifest are trashed once older than this.
+  INBOX_ORPHAN_DAYS: 3,
+  // runId of the last Inbox run that ended (committed or failed); runIds up to it are never processed again.
+  LAST_PROCESSED_RUN_PROPERTY: 'LAST_PROCESSED_RUN',
+  // Last error logged for a poll that failed outside any run, so a lasting problem is logged once.
+  LAST_PULL_ERROR_PROPERTY: 'LAST_PULL_ERROR',
   LOG_SHEET: '_Refresh_Log',
   LOG_HEADERS: ['Run ID', 'Started', 'Finished', 'Feed', 'Rows', 'Source Refreshed At', 'Status', 'Message'],
   LOG_FIRST_ROW: 5,

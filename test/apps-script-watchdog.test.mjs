@@ -54,7 +54,7 @@ test('R37: B1 is compared by its Berlin date, not its UTC date', () => {
   assert.strictEqual(e.context.berlinDate_('nope'), '');
 });
 
-test('R37: installDailyWatchdogTrigger replaces checkDailyRefresh triggers with one daily trigger at 10 (Berlin)', () => {
+test('R37/R43: installDailyWatchdogTrigger replaces checkDailyRefresh triggers with one daily trigger at 08:15 (Berlin)', () => {
   const e = makeEnv();
   const other = e.trigger({ handler: 'somethingElse' });
   e.triggers.push(other, e.trigger({ handler: 'checkDailyRefresh' }), e.trigger({ handler: 'checkDailyRefresh' }));
@@ -62,8 +62,9 @@ test('R37: installDailyWatchdogTrigger replaces checkDailyRefresh triggers with 
   e.context.installDailyWatchdogTrigger();
   const mine = e.triggers.filter((t) => t.getHandlerFunction() === 'checkDailyRefresh');
   assert.strictEqual(mine.length, 1);
-  assert.deepStrictEqual({ type: mine[0].type, everyDays: mine[0].everyDays, atHour: mine[0].atHour, timeZone: mine[0].timeZone },
-    { type: 'CLOCK', everyDays: 1, atHour: 10, timeZone: 'Europe/Berlin' });
+  assert.deepStrictEqual(
+    { type: mine[0].type, everyDays: mine[0].everyDays, atHour: mine[0].atHour, nearMinute: mine[0].nearMinute, timeZone: mine[0].timeZone },
+    { type: 'CLOCK', everyDays: 1, atHour: 8, nearMinute: 15, timeZone: 'Europe/Berlin' });
   assert.ok(e.triggers.includes(other), 'other triggers are kept');
 });
 

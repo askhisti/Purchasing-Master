@@ -1,5 +1,6 @@
 // In-memory fakes of the Apps Script services used by apps-script/MasterData.
 // Each fake encodes an assumption about real Apps Script behaviour; see task-8-report.md.
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import vm from 'node:vm';
@@ -223,11 +224,16 @@ export class FakeSpreadsheet {
 }
 
 class FakeFile {
-  constructor(folder, name, content, mimeType) { Object.assign(this, { folder, name, content, mimeType, trashed: false }); }
+  // content: a string (files the code creates) or a Buffer (binary Inbox files added by tests).
+  constructor(folder, name, content, mimeType, created = new Date()) { Object.assign(this, { folder, name, content, mimeType, created, trashed: false }); }
   getName() { return this.name; }
   setName(n) { this.name = n; return this; }
   getMimeType() { return this.mimeType; }
-  getBlob() { return makeBlob(Buffer.from(this.content, 'utf8'), this.mimeType); }
+  getDateCreated() { return new Date(this.created.getTime()); }
+  getBlob() {
+    if (this.folder.drive.failBlob) this.folder.drive.failBlob(this);
+    return makeBlob(Buffer.isBuffer(this.content) ? Buffer.from(this.content) : Buffer.from(this.content, 'utf8'), this.mimeType);
+  }
   setTrashed(t) { this.trashed = t; return this; }
   isTrashed() { return this.trashed; }
 }
@@ -265,6 +271,12 @@ export class FakeFolder {
     return f;
   }
   // Test helpers
+  // Adds a file as another writer would (e.g. the service account into the Inbox); several files may share a name.
+  addFile(name, bytes, { mimeType = 'application/octet-stream', created = new Date() } = {}) {
+    const f = new FakeFile(this, name, Buffer.from(bytes), mimeType, created);
+    this.files.push(f);
+    return f;
+  }
   folder(n) { return this.liveFolders().find((f) => f.name === n) || null; }
   fileNames() { return this.liveFiles().map((f) => f.name).sort(); }
   file(n) { return this.liveFiles().find((f) => f.name === n) || null; }
@@ -286,7 +298,7 @@ export class FakeDrive {
 function makeBlob(buf, contentType) {
   return {
     buf,
-    getBytes: () => Array.from(buf, (b) => (b > 127 ? b - 256 : b)), // Java signed bytes
+    getBytes: () => toSigned(buf), // Java signed bytes
     getDataAsString: (charset) => buf.toString(charset && /^utf-?8$/i.test(charset) ? 'utf8' : 'utf8'),
     getContentType: () => contentType,
     setContentType(t) { contentType = t; return this; },
@@ -294,6 +306,7 @@ function makeBlob(buf, contentType) {
 }
 
 const toBuffer = (bytes) => Buffer.from(Array.from(bytes, (b) => b & 255));
+const toSigned = (buf) => Array.from(buf, (b) => (b > 127 ? b - 256 : b));
 
 // Utilities.formatDate(date, timeZone, pattern) for the tokens the code uses: yyyy MM dd HH mm ss.
 function formatDate(date, timeZone, pattern) {
@@ -307,7 +320,9 @@ function formatDate(date, timeZone, pattern) {
   return pattern.replace(/yyyy|MM|dd|HH|mm|ss/g, (t) => map[t]);
 }
 
-// ScriptApp triggers: getProjectTriggers, deleteTrigger, newTrigger(fn).timeBased().everyDays().atHour().inTimezone().create().
+// ScriptApp triggers: getProjectTriggers, deleteTrigger,
+// newTrigger(fn).timeBased().everyDays().atHour().nearMinute().inTimezone().create() and .everyMinutes(n).create().
+// Assumption (real Apps Script): everyMinutes accepts only 1, 5, 10, 15 or 30.
 export function makeScriptApp() {
   const triggers = [];
   const trigger = (spec) => ({ ...spec, getHandlerFunction: () => spec.handler });
@@ -322,6 +337,12 @@ export function makeScriptApp() {
       const spec = { handler };
       const clock = {
         everyDays(n) { spec.everyDays = n; return clock; },
+        everyMinutes(n) {
+          if (![1, 5, 10, 15, 30].includes(n)) throw new Error('everyMinutes: the value must be 1, 5, 10, 15 or 30');
+          spec.everyMinutes = n;
+          return clock;
+        },
+        nearMinute(m) { spec.nearMinute = m; return clock; },
         atHour(h) { spec.atHour = h; return clock; },
         inTimezone(tz) { spec.timeZone = tz; return clock; },
         create() { const t = trigger(spec); triggers.push(t); return t; },
@@ -334,6 +355,13 @@ export function makeScriptApp() {
 
 export const FakeUtilities = {
   formatDate,
+  DigestAlgorithm: { MD5: 'MD5', SHA_1: 'SHA_1', SHA_256: 'SHA_256' },
+  // Like Apps Script: value is a string (UTF-8) or a Byte[]; the digest comes back as signed bytes (-128..127).
+  computeDigest: (algorithm, value) => {
+    if (algorithm !== 'SHA_256') throw new Error(`computeDigest: algorithm ${algorithm} not faked`);
+    const buf = typeof value === 'string' ? Buffer.from(value, 'utf8') : toBuffer(value);
+    return toSigned(crypto.createHash('sha256').update(buf).digest());
+  },
   base64Decode: (s) => Array.from(Buffer.from(s, 'base64'), (b) => (b > 127 ? b - 256 : b)),
   base64Encode: (bytes) => (typeof bytes === 'string' ? Buffer.from(bytes, 'utf8') : toBuffer(bytes)).toString('base64'),
   newBlob: (data, contentType) => makeBlob(typeof data === 'string' ? Buffer.from(data, 'utf8') : toBuffer(data), contentType || null),
@@ -348,11 +376,18 @@ export function encodeRows(rows) {
   return zlib.gzipSync(Buffer.from(JSON.stringify(rows), 'utf8')).toString('base64');
 }
 
-export function makeEnv({ props = {}, rootId = '1lP59mBX1dM24emOJlussSvMPbkBiTTUk' } = {}) {
+export const INBOX_ID = '1PE6IcZqJFHM7ISA4XKNHpifk8oCVyqdV';
+
+export function makeEnv({ props = {}, rootId = '1lP59mBX1dM24emOJlussSvMPbkBiTTUk', inboxId = INBOX_ID } = {}) {
   const stored = { ...props };
   const ss = new FakeSpreadsheet();
   const drive = new FakeDrive(rootId);
+  // The Inbox lives inside the root folder (a shared drive in reality).
+  const inbox = new FakeFolder(drive, 'Inbox', inboxId);
+  drive.root.folders.push(inbox);
   const lockLog = [];
+  // lock.busy = true makes tryLock fail (another execution holds the script lock).
+  const lock = { busy: false };
   const scriptApp = makeScriptApp();
   const context = {
     console,
@@ -370,6 +405,7 @@ export function makeEnv({ props = {}, rootId = '1lP59mBX1dM24emOJlussSvMPbkBiTTU
     LockService: {
       getScriptLock: () => ({
         waitLock: (ms) => { lockLog.push(['wait', ms]); },
+        tryLock: (ms) => { lockLog.push(['try', ms]); return !lock.busy; },
         releaseLock: () => { lockLog.push(['release']); },
       }),
     },
@@ -389,5 +425,5 @@ export function makeEnv({ props = {}, rootId = '1lP59mBX1dM24emOJlussSvMPbkBiTTU
     const out = context.doPost({ postData: { contents: JSON.stringify(body) } });
     return JSON.parse(out.getContent());
   };
-  return { context, stored, ss, drive, lockLog, post, triggers: scriptApp.triggers, trigger: scriptApp.trigger };
+  return { context, stored, ss, drive, inbox, lock, lockLog, post, triggers: scriptApp.triggers, trigger: scriptApp.trigger };
 }

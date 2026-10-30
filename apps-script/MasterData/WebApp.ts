@@ -107,8 +107,16 @@ function handleChunk_(req) {
   } catch (err) {
     return { ok: false, error: 'bad chunk payload: ' + errorMessage_(err) };
   }
+  var invalid = stageRows_(run, f, seq, rows);
+  if (invalid) return { ok: false, error: invalid };
+  return { ok: true, stagedRows: f.staged };
+}
+
+// Appends rows as chunk seq of feed f of the active run and saves the run. Returns an error message
+// (nothing written) or null. Shared by the chunk action and the Inbox puller.
+function stageRows_(run, f, seq, rows) {
   var invalid = validateRows_(rows, f.headers.length);
-  if (invalid) return { ok: false, error: f.feed + ' chunk ' + seq + ': ' + invalid };
+  if (invalid) return f.feed + ' chunk ' + seq + ': ' + invalid;
   if (rows.length) {
     // Position comes from the recorded count, so a retry after a partial write overwrites the same rows.
     appendStagedRows_(spreadsheet_(), f.tab, 2 + f.staged, rows, columnFormats_(f.types));
@@ -117,7 +125,7 @@ function handleChunk_(req) {
   f.staged += rows.length;
   f.seqs.push(seq);
   setActiveRun_(run);
-  return { ok: true, stagedRows: f.staged };
+  return null;
 }
 
 // {action:'commit', runId}. Everything that can reject the run happens before any live tab is touched.
@@ -201,8 +209,8 @@ function handleCommit_(req) {
   return { ok: true, feeds: stagedCounts_(run) };
 }
 
-// {action:'fail', runId, reason}. Always logged. Cleans up when runId is the active run, or when no run is
-// active (staging tabs plus that runId's date-folder part/.tmp files). Another active run is left alone.
+// {action:'fail', runId, reason, startedAt?}. Always logged; Started is the active run's start, else startedAt.
+// Cleans up when runId is the active run, or when no run is active (staging tabs plus that runId's date-folder part/.tmp files). Another active run is left alone.
 function handleFail_(req) {
   var ss = spreadsheet_();
   var run = getActiveRun_();
@@ -214,7 +222,8 @@ function handleFail_(req) {
     clearStagingTabs_(ss);
     if (isRunId_(runId)) deleteRunFiles_(snapshotDate_(runId));
   }
-  var logRun = logRun_(runId, active ? run.started : '', nowIso_(), active ? run.sourceRefreshedAt : '');
+  var started = active ? run.started : typeof req.startedAt === 'string' ? req.startedAt : '';
+  var logRun = logRun_(runId, started, nowIso_(), active ? run.sourceRefreshedAt : '');
   writeLogRows_(ss, logRows_(logRun, active ? stagedCounts_(run) : [], 'FAILED', reason));
   return { ok: true };
 }

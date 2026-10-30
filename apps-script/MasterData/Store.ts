@@ -30,12 +30,16 @@ function setLastRowCounts_(counts) {
   setJsonProperty_(MASTERDATA_CONFIG.LAST_ROW_COUNTS_PROPERTY, counts);
 }
 
+// JSON value of gzip-compressed UTF-8 bytes (Byte[]).
+function gunzipJson_(bytes) {
+  var json = Utilities.ungzip(Utilities.newBlob(bytes, 'application/x-gzip')).getDataAsString('UTF-8');
+  return JSON.parse(json);
+}
+
 // rowsB64Gzip = base64(gzip(JSON.stringify(rows))).
 function decodeRows_(rowsB64Gzip) {
   if (typeof rowsB64Gzip !== 'string' || rowsB64Gzip === '') throw new Error('missing rowsB64Gzip');
-  var bytes = Utilities.base64Decode(rowsB64Gzip);
-  var json = Utilities.ungzip(Utilities.newBlob(bytes, 'application/x-gzip')).getDataAsString('UTF-8');
-  return JSON.parse(json);
+  return gunzipJson_(Utilities.base64Decode(rowsB64Gzip));
 }
 
 // DriveApp iterators can include trashed items, so every lookup skips them.
