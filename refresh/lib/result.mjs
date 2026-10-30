@@ -8,12 +8,12 @@ export function parseConnectorResult(text) {
     value = JSON.parse(inner);
   }
   const rs = value && value.result_set;
-  if (!rs || !Array.isArray(rs.data) || !rs.resultSetMetaData) {
+  if (!rs || (rs.data !== undefined && !Array.isArray(rs.data)) || !rs.resultSetMetaData) {
     throw new Error('connector result has no result_set');
   }
   const meta = rs.resultSetMetaData;
   return {
-    rows: rs.data,
+    rows: rs.data ?? [],
     columns: (meta.rowType || []).map((c) => c.name),
     numRows: meta.numRows,
     chars: text.length,

@@ -54,6 +54,7 @@ const healthResp = (year = 2027, problems = 0, list = null) =>
     [[String(year), String(problems), list, '2027-01-01', '2027-01-02']]);
 const countResp = (rc, kc) => resultText(['ROW_COUNT', 'KEY_COUNT'], [[String(rc), String(kc)]]);
 const pageResp = (rows, numRows) => resultText(['ROW_KEY', 'V'], rows, numRows);
+const emptyPage = () => JSON.stringify({ query_id: 'q', result_set: { resultSetMetaData: { numRows: 0, rowType: [{ name: 'ROW_KEY' }, { name: 'V' }] }, statementHandle: 'q' } });
 
 function start(root) {
   const out = begin({ root, now: new Date('2026-10-30T10:15:30Z') });
@@ -273,7 +274,7 @@ test('full last page followed by an empty page completes the feed', () => {
   cap(root, runId, sql, pageResp([['k1', 'a'], ['k2', 'b']]));
   sql = sqlOf(next({ root }));
   assert.match(sql, /ROW_KEY > 'k2'/);
-  cap(root, runId, sql, pageResp([]));
+  cap(root, runId, sql, emptyPage());
   sql = sqlOf(next({ root }));
   assert.match(sql, /FROM u WHERE/);
   assert.equal(stateOf(root, runId).done[0].pages.length, 1);
@@ -286,7 +287,7 @@ test('feed with zero rows completes', () => {
   let sql = sqlOf(next({ root }));
   cap(root, runId, sql, countResp(0, 0));
   sql = sqlOf(next({ root }));
-  cap(root, runId, sql, pageResp([]));
+  cap(root, runId, sql, emptyPage());
   sql = sqlOf(next({ root }));
   assert.match(sql, /FROM u WHERE/);
   assert.deepEqual(stateOf(root, runId).done[0].pages, []);

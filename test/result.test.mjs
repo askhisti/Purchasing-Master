@@ -37,3 +37,16 @@ test('throws on text without a result_set', () => {
   assert.throws(() => parseConnectorResult('{"error":"boom"}'));
   assert.throws(() => parseConnectorResult('not json'));
 });
+
+test('zero-row result has no data key: rows []', () => {
+  const r = parseConnectorResult(fixture('sql-empty.json'));
+  assert.deepEqual(r.rows, []);
+  assert.deepEqual(r.columns, ['ROW_KEY', 'ONE']);
+  assert.equal(r.numRows, 0);
+});
+
+test('data present but not an array, or missing metadata, still throws', () => {
+  assert.throws(() => parseConnectorResult(JSON.stringify({ result_set: { data: 'x', resultSetMetaData: {} } })), /no result_set/);
+  assert.throws(() => parseConnectorResult(JSON.stringify({ result_set: { data: [] } })), /no result_set/);
+  assert.throws(() => parseConnectorResult(JSON.stringify({})), /no result_set/);
+});
