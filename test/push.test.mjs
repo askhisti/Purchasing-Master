@@ -167,3 +167,116 @@ test('fail posts reason and prints FAILED', async () => {
   assert.deepEqual(s.requests[0].body, { token: 'tok', action: 'fail', runId: RUN_ID, reason: 'sf down' });
   assert.equal(stateOf(root).phase, 'failed');
 });
+
+// ---- fix round 1 ----
+
+test('postJson: no retry on HTTP 4xx; backoff is exactly 5s then 20s; body without ok is an error', async () => {
+  let s = await server(() => ({ status: 400, json: { ok: false, error: 'bad' } }));
+  await assert.rejects(postJson(s.url, {}, { sleep: async () => {} }), /bad/);
+  s.close();
+  assert.equal(s.requests.length, 1);
+  s = await server(() => ({ status: 502 }));
+  const sleeps = [];
+  await assert.rejects(postJson(s.url, {}, { sleep: async (ms) => sleeps.push(ms) }));
+  s.close();
+  assert.deepEqual(sleeps, [5000, 20000]);
+  s = await server(() => ({ json: { fine: 1 } }));
+  await assert.rejects(postJson(s.url, {}, { sleep: async () => {} }));
+  s.close();
+});
+
+test('chunkRows throws when a single row exceeds maxBytes', () => {
+  assert.throws(() => chunkRows([['x'.repeat(5000).split('').map((_, i) => String(i * 7919 % 1000)).join('')]], 50), /single row/);
+});
+
+test('finish: multi-chunk seqs 1..n in order, rows concatenate in order', async () => {
+  const root = makeRun();
+  const rows = [['0402', 1.5], ['1E3', null], ['z', 2]];
+  const one = Math.max(...rows.map((r) => chunkRows([r])[0].length));
+  const s = await server(() => ({}));
+  const out = await finish({ root, env: envOf(s), sleep: async () => {}, chunkBytes: one });
+  s.close();
+  assert.equal(out, 'DONE fa=3 fb=0');
+  const chunks = s.requests.filter((r) => r.body.action === 'chunk').map((r) => r.body);
+  assert.deepEqual(chunks.map((c) => c.seq), [1, 2, 3]);
+  assert.ok(chunks.every((c) => c.feed === 'fa'));
+  assert.deepEqual(chunks.flatMap((c) => decode(c.rowsB64Gzip)), rows);
+});
+
+test('finish: begin failure and chunk failure post fail', async () => {
+  for (const bad of ['begin', 'chunk']) {
+    const root = makeRun();
+    const s = await server((b) => (b.action === bad ? { json: { ok: false, error: `${bad} bad` } } : {}));
+    const out = await finish({ root, env: envOf(s), sleep: async () => {} });
+    s.close();
+    assert.equal(out, `FAILED ${bad} bad`);
+    assert.equal(s.requests.at(-1).body.action, 'fail');
+    assert.equal(stateOf(root).phase, 'failed');
+  }
+});
+
+test('finish: failing fail notification is appended', async () => {
+  const root = makeRun();
+  const s = await server((b) => (b.action === 'commit' ? { json: { ok: false, error: 'boom' } } : b.action === 'fail' ? { json: { ok: false, error: 'nope' } } : {}));
+  const out = await finish({ root, env: envOf(s), sleep: async () => {} });
+  s.close();
+  assert.equal(out, 'FAILED boom; fail notification also failed: nope');
+});
+
+test('finish: swapped column names fail naming the feed', async () => {
+  const root = makeRun();
+  const f1 = join(root, 'runs', RUN_ID, 'captures', '0001.json');
+  const cap = JSON.parse(readFileSync(f1, 'utf8'));
+  const resp = JSON.parse(cap.response);
+  resp.result_set.resultSetMetaData.rowType = ['ROW_KEY', 'N', 'V'].map((name) => ({ name }));
+  cap.response = JSON.stringify(resp);
+  writeFileSync(f1, JSON.stringify(cap));
+  const s = await server(() => ({}));
+  const out = await finish({ root, env: envOf(s), sleep: async () => {} });
+  s.close();
+  assert.match(out, /^FAILED fa: .*column/);
+  assert.deepEqual(s.requests.map((r) => r.body.action), ['fail']);
+});
+
+test('finish: commit network error is status unknown, no fail POST, no retry', async () => {
+  const root = makeRun();
+  const s = await server(() => ({}));
+  const calls = [];
+  const fetchImpl = async (url, init) => {
+    const body = JSON.parse(init.body);
+    calls.push({ action: body.action, signal: init.signal });
+    if (body.action === 'commit') throw new Error('socket hang up');
+    return fetch(url, init);
+  };
+  const out = await finish({ root, env: envOf(s), fetchImpl, sleep: async () => {} });
+  s.close();
+  assert.match(out, /^FAILED commit status unknown — check _Refresh_Log: .*socket hang up/);
+  assert.equal(calls.filter((c) => c.action === 'commit').length, 1);
+  assert.ok(calls.every((c) => c.signal));
+  assert.ok(!s.requests.some((r) => r.body.action === 'fail'));
+  assert.equal(stateOf(root).phase, 'unknown');
+  assert.ok(!existsSync(join(root, 'runs', 'CURRENT')));
+});
+
+test('finish: commit 5xx is status unknown too', async () => {
+  const root = makeRun();
+  const s = await server((b) => (b.action === 'commit' ? { status: 503 } : {}));
+  const out = await finish({ root, env: envOf(s), sleep: async () => {} });
+  s.close();
+  assert.match(out, /^FAILED commit status unknown — check _Refresh_Log: HTTP 503/);
+  assert.equal(s.requests.filter((r) => r.body.action === 'commit').length, 1);
+  assert.ok(!s.requests.some((r) => r.body.action === 'fail'));
+});
+
+test('fail deletes CURRENT, also when env is missing', async () => {
+  let root = makeRun();
+  const s = await server(() => ({}));
+  await fail({ root, reason: 'r', env: envOf(s) });
+  s.close();
+  assert.ok(!existsSync(join(root, 'runs', 'CURRENT')));
+  root = makeRun();
+  const out = await fail({ root, reason: 'r', env: {} });
+  assert.equal(out, 'FAILED missing MASTERDATA_WEBAPP_URL or MASTERDATA_TOKEN');
+  assert.equal(stateOf(root).phase, 'failed');
+  assert.ok(!existsSync(join(root, 'runs', 'CURRENT')));
+});

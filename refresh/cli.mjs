@@ -169,7 +169,8 @@ export function next({ root }) {
 function readPageRows(root, runId, page) {
   const file = path.join(runsDir(root), runId, 'captures', `${String(page.captureSeq).padStart(4, '0')}.json`);
   const cap = JSON.parse(fs.readFileSync(file, 'utf8'));
-  return parseConnectorResult(cap.response).rows;
+  const r = parseConnectorResult(cap.response);
+  return { rows: r.rows, columns: r.columns };
 }
 
 function endRun(root, state, phase, failure) {
@@ -197,7 +198,11 @@ function prepareFeeds(root, state, manifest) {
     const raw = [];
     const seen = new Set();
     for (const page of d.pages) {
-      const rows = readPageRows(root, state.runId, page);
+      const { rows, columns } = readPageRows(root, state.runId, page);
+      const want = ['ROW_KEY', ...sqlColumnsFor(feedDef)];
+      if (JSON.stringify(columns) !== JSON.stringify(want)) {
+        throw new Error(`${d.feed}: capture ${page.captureSeq} column names do not match the manifest (got ${columns.join(',')})`);
+      }
       if (rows.length !== page.rows) throw new Error(`${d.feed}: capture ${page.captureSeq} holds ${rows.length} rows, expected ${page.rows}`);
       for (const r of rows) {
         if (seen.has(r[0])) throw new Error(`${d.feed}: duplicate ROW_KEY ${r[0]}`);
@@ -219,13 +224,13 @@ async function bestEffortFail(post, runId, reason) {
   }
 }
 
-export async function finish({ root, env = process.env, fetchImpl, sleep }) {
+export async function finish({ root, env = process.env, fetchImpl, sleep, chunkBytes }) {
   const cfg = webappConfig(env);
   if (!cfg) return MISSING_ENV;
   const state = loadState(root);
   if (state.phase !== 'fetched') return `FAILED run is not fetched (phase ${state.phase})`;
   const opts = { fetchImpl, sleep };
-  const post = (body) => postJson(cfg.url, { token: cfg.token, ...body }, opts);
+  const post = (body, extra) => postJson(cfg.url, { token: cfg.token, ...body }, { ...opts, ...extra });
   const runId = state.runId;
   try {
     const manifest = loadManifest(path.join(root, 'sql', 'feeds.json'));
@@ -238,12 +243,21 @@ export async function finish({ root, env = process.env, fetchImpl, sleep }) {
       health: state.health,
     });
     for (const f of feeds) {
-      const chunks = chunkRows(f.rows);
+      const chunks = chunkRows(f.rows, chunkBytes);
       for (let i = 0; i < chunks.length; i++) {
         await post({ action: 'chunk', runId, feed: f.feedDef.feed, seq: i + 1, rowsB64Gzip: chunks[i] });
       }
     }
-    const res = await post({ action: 'commit', runId });
+    let res;
+    try {
+      res = await post({ action: 'commit', runId }, { delays: [], timeoutMs: 360000 });
+    } catch (e) {
+      if (e && e.transient) {
+        endRun(root, state, 'unknown', e.message);
+        return `FAILED commit status unknown — check _Refresh_Log: ${e.message}`;
+      }
+      throw e;
+    }
     endRun(root, state, 'pushed');
     const counts = feeds.map((f) => `${f.feedDef.feed}=${f.rows.length}`).join(' ');
     return res.warning ? `DONE ${counts} WARNING ${res.warning}` : `DONE ${counts}`;
@@ -256,10 +270,13 @@ export async function finish({ root, env = process.env, fetchImpl, sleep }) {
 }
 
 export async function fail({ root, reason, env = process.env, fetchImpl, sleep }) {
-  const cfg = webappConfig(env);
-  if (!cfg) return MISSING_ENV;
   const state = loadState(root);
   const msg = reason || 'failed';
+  const cfg = webappConfig(env);
+  if (!cfg) {
+    endRun(root, state, 'failed', msg);
+    return MISSING_ENV;
+  }
   const post = (body) => postJson(cfg.url, { token: cfg.token, ...body }, { fetchImpl, sleep });
   const extra = await bestEffortFail(post, state.runId, msg);
   endRun(root, state, 'failed', msg);

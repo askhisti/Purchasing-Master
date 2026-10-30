@@ -23,7 +23,14 @@ export function chunkRows(rows, maxBytes = 2000000) {
   return out;
 }
 
-export async function postJson(url, body, { fetchImpl = fetch, sleep = defaultSleep, delays = [5000, 20000] } = {}) {
+// transient errors (network, timeout, 5xx, unparseable body) leave the server-side outcome unknown.
+function transient(message) {
+  const e = new Error(message);
+  e.transient = true;
+  return e;
+}
+
+export async function postJson(url, body, { fetchImpl = fetch, sleep = defaultSleep, delays = [5000, 20000], timeoutMs = 120000 } = {}) {
   let lastErr;
   for (let attempt = 0; attempt <= delays.length; attempt++) {
     if (attempt > 0) await sleep(delays[attempt - 1]);
@@ -34,22 +41,23 @@ export async function postJson(url, body, { fetchImpl = fetch, sleep = defaultSl
         headers: { 'Content-Type': 'text/plain;charset=utf-8' },
         body: JSON.stringify(body),
         redirect: 'follow',
+        signal: AbortSignal.timeout(timeoutMs),
       });
     } catch (e) {
-      lastErr = new Error(`network error: ${e && e.message ? e.message : e}`);
+      lastErr = transient(`network error: ${e && e.message ? e.message : e}`);
       continue;
     }
     if (res.status >= 500) {
-      lastErr = new Error(`HTTP ${res.status}`);
+      lastErr = transient(`HTTP ${res.status}`);
       continue;
     }
     let json;
     try {
       json = JSON.parse(await res.text());
     } catch {
-      throw new Error(`HTTP ${res.status}: response is not JSON`);
+      throw transient(`HTTP ${res.status}: response is not JSON`);
     }
-    if (!json || json.ok === false) throw new Error(json && json.error ? String(json.error) : 'request failed');
+    if (!json || json.ok !== true) throw new Error(json && json.error ? String(json.error) : 'request failed');
     return json;
   }
   throw lastErr;

@@ -12,9 +12,10 @@ function convert(v, type) {
   if (isEmpty(v)) return null;
   switch (type) {
     case 'number': {
-      const n = Number(v);
-      if (!Number.isFinite(n)) throw new Error(`not a number: ${v}`);
-      return n;
+      const t = String(v).trim();
+      if (t === '') return null;
+      if (!/^-?\d+(\.\d+)?([eE][-+]?\d+)?$/.test(t)) throw new Error(`not a number: ${v}`);
+      return Number(t);
     }
     case 'boolean': {
       if (typeof v === 'boolean') return v;
@@ -23,8 +24,11 @@ function convert(v, type) {
       if (s === 'false') return false;
       throw new Error(`not a boolean: ${v}`);
     }
-    case 'date':
-      return String(v).slice(0, 10);
+    case 'date': {
+      const t = String(v);
+      if (!/^\d{4}-\d{2}-\d{2}/.test(t)) throw new Error(`not a date: ${v}`);
+      return t.slice(0, 10);
+    }
     default:
       return String(v);
   }
@@ -37,7 +41,13 @@ export function shapeFeed(feedDef, baseYear, rawRows, sqlColumns) {
   if (sqlColumns.length !== headers.length) throw new Error(`${feedDef.feed}: column count mismatch`);
   const rows = rawRows.map((raw, i) => {
     if (raw.length !== sqlColumns.length + 1) throw new Error(`${feedDef.feed}: row ${i} has ${raw.length} columns, expected ${sqlColumns.length + 1}`);
-    return types.map((t, j) => convert(raw[j + 1], t));
+    return types.map((t, j) => {
+      try {
+        return convert(raw[j + 1], t);
+      } catch (e) {
+        throw new Error(`${feedDef.feed} column ${headers[j]}: ${e.message}`);
+      }
+    });
   });
   return { headers, types, rows };
 }

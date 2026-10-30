@@ -45,3 +45,15 @@ test('ROW_KEY dropped and demand headers follow base year', () => {
 test('row width mismatch throws', () => {
   assert.throws(() => shapeFeed(feedDef, 2027, [['k', 'a']], cols), /columns/);
 });
+
+test('date must look like YYYY-MM-DD, error names feed and column', () => {
+  assert.throws(() => shapeFeed(feedDef, 2027, [['k', 'a', '1', 'not a date', 'true']], cols), /f.*D/);
+});
+
+test('number: whitespace is null, non-decimal forms rejected, exponent accepted', () => {
+  assert.equal(shapeFeed(feedDef, 2027, [['k', 'a', '  ', '', '']], cols).rows[0][1], null);
+  assert.equal(shapeFeed(feedDef, 2027, [['k', 'a', '1e3', '', '']], cols).rows[0][1], 1000);
+  assert.equal(shapeFeed(feedDef, 2027, [['k', 'a', ' -2.5 ', '', '']], cols).rows[0][1], -2.5);
+  assert.throws(() => shapeFeed(feedDef, 2027, [['k', 'a', '0x1A', '', '']], cols), /f.*N/);
+  assert.throws(() => shapeFeed(feedDef, 2027, [['k', 'a', 'Infinity', '', '']], cols), /f.*N/);
+});
