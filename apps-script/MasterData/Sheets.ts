@@ -119,6 +119,52 @@ function writeLogRows_(ss, rows) {
   writeBlock_(sheet, first, rows, ['@', '@', '@', '@', '0', '@', '@', '@']);
 }
 
+// R36: _Refresh_Log Started/Finished are Berlin wall-clock time; B1 stays ISO UTC.
+function logTime_(iso) {
+  if (!iso) return '';
+  var d = new Date(iso);
+  if (isNaN(d.getTime())) return String(iso);
+  return Utilities.formatDate(d, MASTERDATA_CONFIG.TIME_ZONE, MASTERDATA_CONFIG.LOG_TIME_FORMAT);
+}
+
+// Berlin calendar date (yyyy-MM-dd) of an ISO time, or '' when it is not a time.
+function berlinDate_(iso) {
+  var d = new Date(iso);
+  if (!iso || isNaN(d.getTime())) return '';
+  return Utilities.formatDate(d, MASTERDATA_CONFIG.TIME_ZONE, 'yyyy-MM-dd');
+}
+
+// The run object logRows_ expects, with times formatted for the log.
+function logRun_(runId, startedIso, finishedIso, sourceRefreshedAt) {
+  return { runId: runId, started: logTime_(startedIso), finished: logTime_(finishedIso), sourceRefreshedAt: sourceRefreshedAt };
+}
+
+// B1 of _Refresh_Log as an ISO string ('' when the sheet or the value is missing).
+function getLastSuccess_(ss) {
+  var sheet = ss.getSheetByName(MASTERDATA_CONFIG.LOG_SHEET);
+  if (!sheet) return '';
+  var v = sheet.getRange(1, 2).getValue();
+  if (Object.prototype.toString.call(v) === '[object Date]') return v.toISOString();
+  return v === null || v === undefined ? '' : String(v);
+}
+
+function ensureLocale_(ss) {
+  if (ss.getSpreadsheetLocale() !== MASTERDATA_CONFIG.LOCALE) ss.setSpreadsheetLocale(MASTERDATA_CONFIG.LOCALE);
+}
+
+// Deletes the default 'Sheet1' / 'Tabelle1' when it holds no data. Returns the deleted names.
+function deleteEmptyDefaultSheets_(ss) {
+  var deleted = [];
+  MASTERDATA_CONFIG.DEFAULT_SHEET_NAMES.forEach(function (name) {
+    var sheet = ss.getSheetByName(name);
+    if (sheet && sheet.getLastRow() === 0 && sheet.getLastColumn() === 0 && ss.getSheets().length > 1) {
+      ss.deleteSheet(sheet);
+      deleted.push(name);
+    }
+  });
+  return deleted;
+}
+
 function setLastSuccess_(ss, isoTime, baseYear) {
   var sheet = ensureLogSheet_(ss);
   writeBlock_(sheet, 1, [['Last successful refresh', isoTime]], ['@', '@']);

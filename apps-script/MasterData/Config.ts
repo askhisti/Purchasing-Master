@@ -9,6 +9,15 @@ var MASTERDATA_CONFIG = {
   RETENTION_DAYS: 30,
   MAX_ROW_DROP: 0.2,
   LOCK_TIMEOUT_MS: 30000,
+  // Same as appsscript.json timeZone; used for _Refresh_Log times and the watchdog trigger.
+  TIME_ZONE: 'Europe/Berlin',
+  LOG_TIME_FORMAT: 'yyyy-MM-dd HH:mm:ss',
+  // Locale set on begin so number and date parsing never follows a German locale.
+  LOCALE: 'en_US',
+  // Empty default sheets removed after a successful commit.
+  DEFAULT_SHEET_NAMES: ['Sheet1', 'Tabelle1'],
+  WATCHDOG_HANDLER: 'checkDailyRefresh',
+  WATCHDOG_HOUR: 10,
   LOG_SHEET: '_Refresh_Log',
   LOG_HEADERS: ['Run ID', 'Started', 'Finished', 'Feed', 'Rows', 'Source Refreshed At', 'Status', 'Message'],
   LOG_FIRST_ROW: 5,

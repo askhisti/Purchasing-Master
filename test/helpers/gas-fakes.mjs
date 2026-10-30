@@ -183,6 +183,12 @@ export class FakeSpreadsheet {
     this.active = null;
     this.calls = [];
     this.nextId = 0;
+    this.locale = 'en_US';
+  }
+  getSpreadsheetLocale() { return this.locale; }
+  setSpreadsheetLocale(locale) {
+    this.calls.push({ op: 'setSpreadsheetLocale', locale });
+    this.locale = locale;
   }
   getSheets() { return [...this.sheets]; }
   getSheetByName(n) { return this.sheets.find((s) => s.name === n) || null; }
@@ -289,7 +295,45 @@ function makeBlob(buf, contentType) {
 
 const toBuffer = (bytes) => Buffer.from(Array.from(bytes, (b) => b & 255));
 
+// Utilities.formatDate(date, timeZone, pattern) for the tokens the code uses: yyyy MM dd HH mm ss.
+function formatDate(date, timeZone, pattern) {
+  const ms = Number(date);
+  if (!Number.isFinite(ms)) throw new Error('formatDate: invalid date');
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23',
+  }).formatToParts(new Date(ms));
+  const p = Object.fromEntries(parts.map((x) => [x.type, x.value]));
+  const map = { yyyy: p.year, MM: p.month, dd: p.day, HH: p.hour, mm: p.minute, ss: p.second };
+  return pattern.replace(/yyyy|MM|dd|HH|mm|ss/g, (t) => map[t]);
+}
+
+// ScriptApp triggers: getProjectTriggers, deleteTrigger, newTrigger(fn).timeBased().everyDays().atHour().inTimezone().create().
+export function makeScriptApp() {
+  const triggers = [];
+  const trigger = (spec) => ({ ...spec, getHandlerFunction: () => spec.handler });
+  const ScriptApp = {
+    getProjectTriggers: () => [...triggers],
+    deleteTrigger: (t) => {
+      const i = triggers.indexOf(t);
+      if (i < 0) throw new Error('deleteTrigger: unknown trigger');
+      triggers.splice(i, 1);
+    },
+    newTrigger: (handler) => {
+      const spec = { handler };
+      const clock = {
+        everyDays(n) { spec.everyDays = n; return clock; },
+        atHour(h) { spec.atHour = h; return clock; },
+        inTimezone(tz) { spec.timeZone = tz; return clock; },
+        create() { const t = trigger(spec); triggers.push(t); return t; },
+      };
+      return { timeBased: () => { spec.type = 'CLOCK'; return clock; } };
+    },
+  };
+  return { ScriptApp, triggers, trigger };
+}
+
 export const FakeUtilities = {
+  formatDate,
   base64Decode: (s) => Array.from(Buffer.from(s, 'base64'), (b) => (b > 127 ? b - 256 : b)),
   base64Encode: (bytes) => (typeof bytes === 'string' ? Buffer.from(bytes, 'utf8') : toBuffer(bytes)).toString('base64'),
   newBlob: (data, contentType) => makeBlob(typeof data === 'string' ? Buffer.from(data, 'utf8') : toBuffer(data), contentType || null),
@@ -309,6 +353,7 @@ export function makeEnv({ props = {}, rootId = '1lP59mBX1dM24emOJlussSvMPbkBiTTU
   const ss = new FakeSpreadsheet();
   const drive = new FakeDrive(rootId);
   const lockLog = [];
+  const scriptApp = makeScriptApp();
   const context = {
     console,
     PropertiesService: {
@@ -331,6 +376,7 @@ export function makeEnv({ props = {}, rootId = '1lP59mBX1dM24emOJlussSvMPbkBiTTU
     SpreadsheetApp: { getActiveSpreadsheet: () => ss },
     DriveApp: { getFolderById: (id) => drive.getFolderById(id) },
     Utilities: FakeUtilities,
+    ScriptApp: scriptApp.ScriptApp,
     Logger: { log() {} },
   };
   vm.createContext(context);
@@ -343,5 +389,5 @@ export function makeEnv({ props = {}, rootId = '1lP59mBX1dM24emOJlussSvMPbkBiTTU
     const out = context.doPost({ postData: { contents: JSON.stringify(body) } });
     return JSON.parse(out.getContent());
   };
-  return { context, stored, ss, drive, lockLog, post };
+  return { context, stored, ss, drive, lockLog, post, triggers: scriptApp.triggers, trigger: scriptApp.trigger };
 }

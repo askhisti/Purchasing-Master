@@ -57,12 +57,18 @@ function discardRun_(ss, run) {
   clearActiveRun_();
 }
 
-// {action:'begin', runId, baseYear, feeds:[{feed, tab, headers, types, rowCount}], health}
+// {action:'begin', runId, startedAt, baseYear, feeds:[{feed, tab, headers, types, rowCount}], health}
+// startedAt (ISO) is the CLI run start; the log's Started column uses it (now when absent).
 function handleBegin_(req) {
   var invalid = validateBegin_(req);
   if (invalid) return { ok: false, error: invalid };
   var ss = spreadsheet_();
+  ensureLocale_(ss);
   var prev = getActiveRun_();
+  if (prev && prev.runId !== req.runId) {
+    // The replaced run never committed or failed; record it before its state is cleared.
+    writeLogRows_(ss, logRows_(logRun_(prev.runId, prev.started, nowIso_(), prev.sourceRefreshedAt), [], 'ABANDONED', 'replaced by ' + req.runId));
+  }
   clearActiveRun_();
   ensureLogSheet_(ss); // keeps a visible sheet so staging tabs can be hidden
   clearStagingTabs_(ss);
@@ -73,7 +79,7 @@ function handleBegin_(req) {
     runId: req.runId,
     date: date,
     baseYear: req.baseYear,
-    started: nowIso_(),
+    started: typeof req.startedAt === 'string' ? req.startedAt : nowIso_(),
     sourceRefreshedAt: sourceRefreshedAt_(req.health),
     feeds: req.feeds.map(function (f) {
       createStagingTab_(ss, f.tab, f.headers);
@@ -148,7 +154,7 @@ function handleCommit_(req) {
       message += '; cleanup failed: ' + errorMessage_(cleanupErr);
     }
     try {
-      var failRun = { runId: run.runId, started: run.started, finished: nowIso_(), sourceRefreshedAt: run.sourceRefreshedAt };
+      var failRun = logRun_(run.runId, run.started, nowIso_(), run.sourceRefreshedAt);
       writeLogRows_(ss, logRows_(failRun, stagedCounts_(run), 'FAILED', message));
     } catch (logErr) {
       message += '; log write failed: ' + errorMessage_(logErr);
@@ -180,9 +186,12 @@ function handleCommit_(req) {
   step('snapshot prune', function () {
     pruneSnapshots_(run.date);
   });
+  step('default sheet', function () {
+    deleteEmptyDefaultSheets_(ss);
+  });
   var finished = nowIso_();
   step('log', function () {
-    var logRun = { runId: run.runId, started: run.started, finished: finished, sourceRefreshedAt: run.sourceRefreshedAt };
+    var logRun = logRun_(run.runId, run.started, finished, run.sourceRefreshedAt);
     writeLogRows_(ss, logRows_(logRun, stagedCounts_(run), 'OK', warnings.join('; ')));
   });
   step('last successful refresh', function () {
@@ -205,12 +214,7 @@ function handleFail_(req) {
     clearStagingTabs_(ss);
     if (isRunId_(runId)) deleteRunFiles_(snapshotDate_(runId));
   }
-  var logRun = {
-    runId: runId,
-    started: active ? run.started : '',
-    finished: nowIso_(),
-    sourceRefreshedAt: active ? run.sourceRefreshedAt : '',
-  };
+  var logRun = logRun_(runId, active ? run.started : '', nowIso_(), active ? run.sourceRefreshedAt : '');
   writeLogRows_(ss, logRows_(logRun, active ? stagedCounts_(run) : [], 'FAILED', reason));
   return { ok: true };
 }

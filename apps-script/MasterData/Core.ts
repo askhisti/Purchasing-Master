@@ -109,6 +109,7 @@ function validateBegin_(req) {
   var everyTab = 'begin must list every tab';
   if (!isRunId_(req.runId)) return 'bad runId';
   if (!isNonNegInt_(req.baseYear)) return 'bad baseYear';
+  if (req.startedAt !== undefined && (typeof req.startedAt !== 'string' || isNaN(Date.parse(req.startedAt)))) return 'bad startedAt';
   if (!Array.isArray(req.feeds) || req.feeds.length !== MASTERDATA_CONFIG.TABS.length) return everyTab;
   var seenFeeds = {};
   var seenTabs = {};

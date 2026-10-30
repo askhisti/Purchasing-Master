@@ -81,6 +81,11 @@ function runProducts(e, runId, rows) {
   assert.strictEqual(chunk(e, runId, 'products', 1, rows).ok, true);
 }
 const ALL_CSV = FEED_NAMES.map((f) => `${f}.csv`).sort();
+const BERLIN_FMT = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/;
+// Independent of the Utilities.formatDate fake: sv-SE formats as 'yyyy-MM-dd HH:mm:ss'.
+const berlin = (iso) => new Intl.DateTimeFormat('sv-SE', {
+  timeZone: 'Europe/Berlin', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23',
+}).format(new Date(iso));
 
 test('begin -> 2 chunks -> commit puts the sent rows live, snapshots CSV, logs OK', () => {
   const e = env();
@@ -155,14 +160,16 @@ test('begin -> 2 chunks -> commit puts the sent rows live, snapshots CSV, logs O
   // Log layout and OK rows.
   const log = logData(e);
   assert.strictEqual(log[0][0], 'Last successful refresh');
-  assert.match(log[0][1], /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/);
+  assert.match(log[0][1], /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/, 'R36: B1 stays an ISO UTC time');
   assert.deepStrictEqual(log[1].slice(0, 2), ['Base year', 2026]);
   assert.deepStrictEqual(log[3], LOG_HEADERS);
   assert.strictEqual(log.length, 4 + 6);
   assert.deepStrictEqual(log.slice(4).map((r) => [r[0], r[3], r[4], r[5], r[6], r[7]]),
     FEED_NAMES.map((f) => [RUN, f, { components: 3, products: 1 }[f] ?? 0, SRC, 'OK', '']));
+  assert.match(log[4][1], BERLIN_FMT);
+  assert.match(log[4][2], BERLIN_FMT);
   assert.strictEqual(log[4][1] <= log[4][2], true, 'Started <= Finished');
-  assert.strictEqual(log[4][2], log[0][1], 'B1 is the commit finish time');
+  assert.strictEqual(log[4][2], berlin(log[0][1]), 'Finished is the commit finish time (B1) in Berlin time');
 
   // Properties.
   assert.strictEqual(e.stored.ACTIVE_RUN, undefined);
@@ -437,4 +444,88 @@ test('existing auth rules still apply to the new actions', () => {
   assert.deepStrictEqual(e.post({ token: 'wrong', action: 'begin', runId: RUN, baseYear: 2026, feeds: feedsFor({}) }), { ok: false, error: 'unauthorized' });
   assert.strictEqual(e.ss.getSheets().length, 0);
   assert.strictEqual(e.lockLog.length, 0, 'unauthorized requests never take the lock');
+});
+
+// ---- final review fixes ----
+
+test('begin replacing an active run with another runId logs the old run as ABANDONED', () => {
+  const e = env();
+  e.call({ action: 'begin', runId: RUN, startedAt: '2026-10-30T06:00:03.000Z', baseYear: 2026, feeds: feedsFor({ products: 1 }), health: HEALTH });
+  chunk(e, RUN, 'products', 1, PROD_ROWS);
+  assert.deepStrictEqual(begin(e, RUN2, { products: 1 }), { ok: true });
+  const rows = logData(e).slice(4);
+  assert.strictEqual(rows.length, 1);
+  const [runId, started, finished, feed, count, src, status, message] = rows[0];
+  assert.deepStrictEqual([runId, started, feed, count, src, status, message],
+    [RUN, '2026-10-30 07:00:03', '', '', SRC, 'ABANDONED', `replaced by ${RUN2}`]);
+  assert.match(finished, BERLIN_FMT);
+  assert.strictEqual(JSON.parse(e.stored.ACTIVE_RUN).runId, RUN2);
+});
+
+test('begin repeated for the same runId (a retried begin) logs no ABANDONED row', () => {
+  const e = env();
+  begin(e, RUN, { products: 1 });
+  assert.deepStrictEqual(begin(e, RUN, { products: 1 }), { ok: true });
+  assert.deepStrictEqual(logData(e).slice(4), []);
+});
+
+test('begin sets the spreadsheet locale to en_US when it differs, and leaves en_US alone', () => {
+  const e = env();
+  e.ss.locale = 'de_DE';
+  assert.deepStrictEqual(begin(e, RUN, {}), { ok: true });
+  assert.strictEqual(e.ss.getSpreadsheetLocale(), 'en_US');
+  assert.deepStrictEqual(e.ss.calls.filter((c) => c.op === 'setSpreadsheetLocale'), [{ op: 'setSpreadsheetLocale', locale: 'en_US' }]);
+  const e2 = env();
+  begin(e2, RUN, {});
+  assert.strictEqual(e2.ss.calls.filter((c) => c.op === 'setSpreadsheetLocale').length, 0);
+});
+
+test('R36: Started comes from begin startedAt; Started/Finished are Berlin time; B1 is ISO UTC', () => {
+  const e = env();
+  const startedAt = '2026-10-30T06:00:03.000Z'; // 07:00:03 CET
+  assert.deepStrictEqual(e.call({ action: 'begin', runId: RUN, startedAt, baseYear: 2026, feeds: feedsFor({ products: 1 }), health: HEALTH }), { ok: true });
+  chunk(e, RUN, 'products', 1, PROD_ROWS);
+  assert.strictEqual(commit(e, RUN).ok, true);
+  const log = logData(e);
+  assert.match(log[0][1], /Z$/);
+  for (const r of log.slice(4)) {
+    assert.strictEqual(r[1], '2026-10-30 07:00:03');
+    assert.strictEqual(r[2], berlin(log[0][1]));
+  }
+  // Summer time: +02:00.
+  assert.strictEqual(e.context.logTime_('2026-07-01T05:00:00.000Z'), '2026-07-01 07:00:00');
+  assert.strictEqual(e.context.logTime_(''), '');
+});
+
+test('R36: begin rejects a startedAt that is not a timestamp', () => {
+  const e = env();
+  const res = e.call({ action: 'begin', runId: RUN, startedAt: 'yesterday-ish', baseYear: 2026, feeds: feedsFor({}), health: HEALTH });
+  assert.deepStrictEqual(res, { ok: false, error: 'bad startedAt' });
+  assert.strictEqual(e.stored.ACTIVE_RUN, undefined);
+});
+
+test('a successful commit deletes an empty default Sheet1 / Tabelle1, never one with data', () => {
+  const e = env();
+  e.ss.insertSheet('Sheet1');
+  e.ss.seed('Tabelle1', [['notes']]);
+  runProducts(e, RUN, PROD_ROWS);
+  assert.strictEqual(commit(e, RUN).ok, true);
+  assert.strictEqual(e.ss.getSheetByName('Sheet1'), null);
+  assert.ok(e.ss.getSheetByName('Tabelle1'));
+
+  const e2 = env();
+  e2.ss.insertSheet('Tabelle1');
+  runProducts(e2, RUN, PROD_ROWS);
+  assert.strictEqual(commit(e2, RUN).ok, true);
+  assert.strictEqual(e2.ss.getSheetByName('Tabelle1'), null);
+  assert.deepStrictEqual(e2.ss.names(), [...TABS, '_Refresh_Log']);
+});
+
+test('a failed commit keeps an empty default sheet', () => {
+  const e = env();
+  e.ss.insertSheet('Sheet1');
+  begin(e, RUN, { products: 2 });
+  chunk(e, RUN, 'products', 1, PROD_ROWS);
+  assert.strictEqual(commit(e, RUN).ok, false);
+  assert.ok(e.ss.getSheetByName('Sheet1'));
 });
