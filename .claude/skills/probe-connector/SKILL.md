@@ -24,13 +24,10 @@ b. `SELECT COMPONENT_PRICE_ID FROM MECL_PLATFORM.ANALYTICS.COMPONENT_PRICE_ITEMS
 c. Three calls of the 13-column query with `LIMIT 1200`, then `LIMIT 2400`, then `LIMIT 3600`:
 
 ```
-SELECT COMPONENT_PRICE_ID, ME_EC, RESOLVED_ME_EC, IS_LINKED, PRICE_TYPE, PRICE_OWNER, VENDOR, VENDOR_PART_NUMBER, VOLUME_STAGE, YEAR, MOQ, PRICE, CURRENCY
-FROM MECL_PLATFORM.ANALYTICS.COMPONENT_PRICE_ITEMS
-ORDER BY COMPONENT_PRICE_ID
-LIMIT <1200|2400|3600>
+SELECT COMPONENT_PRICE_ID, PART_NUMBER, PRICE_TYPE, PRICE_OWNER_NAME, VENDOR, VOLUME_STAGE, PRICE_YEAR, PRICE_PER_UNIT, CURRENCY, QUOTE_VALID_START, QUOTE_VALID_END, QUOTED_MANUFACTURER, QUOTED_MANUFACTURER_PARTNUMBER FROM MECL_PLATFORM.ANALYTICS.COMPONENT_PRICE_ITEMS ORDER BY COMPONENT_PRICE_ID LIMIT <n>
 ```
 
-If a column name is rejected, run `DESCRIBE TABLE MECL_PLATFORM.ANALYTICS.COMPONENT_PRICE_ITEMS`, substitute 13 real columns (keep the same 13 for all three calls) and say so in the report. If a call errors or its output is truncated or saved to a file, carry on with the next query.
+with n = 1200, 2400, 3600. The connector accepts SELECT only; these column names are confirmed, do not alter them. If a call errors, copy the exact error text into the report as an extra row under the table and continue with the next query. The same applies to a truncated result or one saved to a file.
 
 ## 3. Print the capture table
 

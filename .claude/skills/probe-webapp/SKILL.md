@@ -20,7 +20,7 @@ try {
   console.log('status', res.status);
   console.log('body', (await res.text()).slice(0, 2000));
 } catch (e) {
-  console.log('fetch failed:', e.message, e.cause ? String(e.cause.code || e.cause.message) : '');
+  console.log('fetch failed, code:', (e.cause && e.cause.code) || e.name);
 }
 "
 ```
