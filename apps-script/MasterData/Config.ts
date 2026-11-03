@@ -94,11 +94,11 @@ var MASTERDATA_CONFIG = {
   // A1 note of a live tab (set after every commit by applyTabNotes_); tabs without an entry get no note.
   TAB_NOTES: {
     Product_Volumes:
-      "One row per product and flow (series/sample). Planned finished-product units. Months are the finished product's planned build/shipment month at the EMS; there is no lead-time offset. From 2028 most months are the yearly plan spread evenly over 12 months. Released-BOM coverage per year: see tab BOM_Coverage.",
+      "One row per product and flow (series/sample). Planned finished-product units. Months are the finished product's planned build/shipment month at the EMS; there is no lead-time offset. From the year after next, most months are the yearly plan spread evenly over 12 months. Released-BOM coverage per year: see tab BOM_Coverage.",
     Component_Demand_Monthly:
-      "Released-BOM demand of the primary source only (alternatives, scrap and lead time excluded). Months are the finished product's planned build/shipment month at the EMS; there is no lead-time offset. From 2028 most months are the yearly plan spread evenly over 12 months. Released-BOM coverage per year: see tab BOM_Coverage.",
+      "Released-BOM demand of the primary source only (alternatives, scrap and lead time excluded). Months are the finished product's planned build/shipment month at the EMS; there is no lead-time offset. From the year after next, most months are the yearly plan spread evenly over 12 months. Released-BOM coverage per year: see tab BOM_Coverage.",
     BOM_Demand_Monthly:
-      "Released-BOM demand of the primary source only (alternatives, scrap and lead time excluded). Months are the finished product's planned build/shipment month at the EMS; there is no lead-time offset. From 2028 most months are the yearly plan spread evenly over 12 months. Released-BOM coverage per year: see tab BOM_Coverage.",
+      "Released-BOM demand of the primary source only (alternatives, scrap and lead time excluded). Months are the finished product's planned build/shipment month at the EMS; there is no lead-time offset. From the year after next, most months are the yearly plan spread evenly over 12 months. Released-BOM coverage per year: see tab BOM_Coverage.",
     BOM_Sources:
       "One row per BOM line (product x primary ME_EC) and source. Source position 1 is the BOM primary; its volume is demand. Other positions are usable multisource alternatives; their volume is the line's full volume as potential volume if sourced. Never add volumes across the rows of a line or across clusters.",
     Price_At_Demand:

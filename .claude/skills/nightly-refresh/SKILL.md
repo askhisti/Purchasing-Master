@@ -1,6 +1,6 @@
 ---
 name: nightly-refresh
-description: Nightly Purchasing Master refresh. Drives refresh/cli.mjs and the Snowflake connector to fetch the six feeds and upload them to the Drive Inbox, from where the MasterData Apps Script pulls them. Use when asked to run the nightly refresh.
+description: Nightly Purchasing Master refresh. Drives refresh/cli.mjs and the Snowflake connector to fetch the feeds in sql/feeds.json and upload them to the Drive Inbox, from where the MasterData Apps Script pulls them. Use when asked to run the nightly refresh.
 ---
 
 # Nightly refresh
