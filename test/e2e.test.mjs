@@ -9,14 +9,14 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { begin, next, finish } from '../refresh/cli.mjs';
-import { loadManifest, sqlColumnsFor, headersFor, demandYearsFor } from '../refresh/lib/manifest.mjs';
+import { loadManifest, sqlColumnsFor, headersFor, demandYearsFor, demandMonthsFor } from '../refresh/lib/manifest.mjs';
 import { fakeGoogle, KEY_JSON } from './helpers/sa-key.mjs';
 
 const repo = fileURLToPath(new URL('..', import.meta.url));
 const NOW = new Date('2026-10-30T06:00:03.000Z'); // 07:00:03 Berlin (CET)
 const RUN_ID = '2026-10-30T07-00-03';
 const BASE_YEAR = 2026;
-const ROWS_PER_FEED = { components: 3, multisource: 1, multisource_members: 2, component_usage: 3, products: 2, mecl_price: 1 };
+const ROWS_PER_FEED = { components: 3, multisource: 1, multisource_members: 2, component_usage: 3, products: 2, mecl_price: 1, product_volumes: 2, component_demand_monthly: 2, bom_demand_monthly: 2 };
 
 const resultText = (columns, rows) => JSON.stringify({
   query_id: 'q',
@@ -64,6 +64,13 @@ function fixture(feed) {
         s.push(expected('number', v));
       }
     }
+    if (feed.demandMonths) {
+      for (let k = 0; k < demandMonthsFor(feed, BASE_YEAR).length; k++) {
+        const v = String(10 * (k + 1) + i);
+        r.push(v);
+        s.push(expected('number', v));
+      }
+    }
     raw.push(r);
     sheet.push(s);
   }
@@ -106,7 +113,7 @@ test('e2e: begin/next over the real manifest, then finish into the Drive Inbox',
         response = resultText(['ROW_COUNT', 'KEY_COUNT'], [[String(fx.raw.length), String(fx.raw.length)]]);
       } else {
         kinds.push(`page:${feed.feed}`);
-        assert.match(sql, /ORDER BY ROW_KEY LIMIT 500$/);
+        assert.match(sql, new RegExp(`ORDER BY ROW_KEY LIMIT ${feed.pageLimit}$`));
         response = resultText(fx.columns, fx.raw);
       }
     }

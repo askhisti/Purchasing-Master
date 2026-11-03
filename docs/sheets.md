@@ -42,3 +42,12 @@ Key `COMPONENT_PRICE_ID|COALESCE(PART_NUMBER,'')` (a quote linked to two compone
 | mecl_price | 20,856 | 20,856 |
 
 Spot checks: `ME_EC_0000001` Demand 2026 = 19,993 and Demand 2030 = 750 in the feed, equal to `KPI_COMPONENT_DEMAND_BY_YEAR` (PART_KIND COMPONENT, sourced by us). Components with at least one usable cluster: 818; with several usable clusters: 31 (both equal the spec's figures). `mecl_price`: 14,391 linked rows, 14,391 rows with non-null Resolved ME_EC (>= linked); 6,465 unlinked rows, of which 0 resolve by exact trimmed upper-case MPN (45 would match if punctuation were stripped; not done, spec says exact).
+
+## Product_Volumes
+Key `PRODUCT_ID|Flow`. Sources `COMPONENT_DEMAND_FORECAST` (all rows, no sourced or part-kind filter; `MAX(PLANNED_PRODUCT_UNITS)` per product, flow and month because product units repeat on every part row), `PRODUCT_CATALOG` (Project; blank when the product is not in the catalog). Columns: Product ID (number), Product Display Name, Project, Program, Customer, EMS, Flow (strings; Flow is `Series` or `Sample`), Units 2025..Y+10 (number; sum of that year's months), then one column per month `2025-01`..`Y+10-12` (number; planned units, 0 when no plan). Page limit 200.
+
+## Component_Demand_Monthly
+Key `ME_EC`. Sources `COMPONENT_DEMAND_FORECAST` (sourced by us, `PART_KIND = 'COMPONENT'`, `DEMAND_QUANTITY` summed over products and flows), `COMPONENT_CATALOG`, `MULTISOURCE_PART_MEMBERS`. Columns: ME_EC, MPN, Manufacturer, HW Category, HW Subcategory, Primary ME_MS (strings; highest-numbered usable cluster), then one month column per month `2025-01`..`Y+10-12` (number, 0 when no plan). Components whose total demand is 0 are left out. Page limit 200.
+
+## BOM_Demand_Monthly
+Key `ME_EC|PRODUCT_ID|Flow`. Sources `COMPONENT_DEMAND_FORECAST` (sourced by us, `PART_KIND = 'COMPONENT'`), `COMPONENT_CATALOG`. Columns: ME_EC, MPN, Manufacturer, Product, Product ID (number), EMS, Flow (strings), Qty Per Unit (number, `MAX(QTY_PER_UNIT)`), then one month column per month `2025-01`..`Y+10-12` (number, demand of that product and flow, 0 when no plan). Page limit 200.

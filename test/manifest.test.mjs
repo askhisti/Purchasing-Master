@@ -18,6 +18,12 @@ const SPEC = {
   mecl_price: ['MECL_Price', ['Price ID', 'ME_EC', 'Resolved ME_EC', 'Is Linked', 'Price Type', 'Price Owner', 'Vendor', 'Vendor Part Number', 'Volume Stage', 'Year', 'MOQ', 'Price', 'Currency', 'Price EUR (current rate)', 'Quoted Unit', 'Quoted Manufacturer', 'Quoted MPN', 'Quote Reference', 'Quote File', 'Valid From', 'Valid Until', 'Is Valid Today', 'Is Binding', 'Created At']],
 };
 const WITH_DEMAND = new Set(['components', 'multisource', 'component_usage']);
+const MONTHLY = {
+  product_volumes: ['Product_Volumes', ['Product ID', 'Product Display Name', 'Project', 'Program', 'Customer', 'EMS', 'Flow']],
+  component_demand_monthly: ['Component_Demand_Monthly', ['ME_EC', 'MPN', 'Manufacturer', 'HW Category', 'HW Subcategory', 'Primary ME_MS']],
+  bom_demand_monthly: ['BOM_Demand_Monthly', ['ME_EC', 'MPN', 'Manufacturer', 'Product', 'Product ID', 'EMS', 'Flow', 'Qty Per Unit']],
+};
+const months = Array.from({ length: 144 }, (_, k) => `${2025 + Math.floor(k / 12)}-${String(k % 12 + 1).padStart(2, '0')}`);
 
 // Blank out comments and string literals so structure scanning is safe.
 function clean(sql) {
@@ -62,13 +68,30 @@ function finalSelect(sql) {
 
 const manifest = loadManifest();
 
-test('manifest lists the six feeds in order with spec tab names', () => {
-  assert.deepEqual(manifest.feeds.map((f) => f.feed), Object.keys(SPEC));
-  for (const f of manifest.feeds) assert.equal(f.tab, SPEC[f.feed][0]);
+test('manifest lists the feeds in order with spec tab names', () => {
+  assert.deepEqual(manifest.feeds.map((f) => f.feed), [...Object.keys(SPEC), ...Object.keys(MONTHLY)]);
+  for (const f of manifest.feeds) assert.equal(f.tab, (SPEC[f.feed] || MONTHLY[f.feed])[0]);
+});
+
+test('monthly feeds: headers, years and 144 month columns', () => {
+  const get = (n) => manifest.feeds.find((f) => f.feed === n);
+  const cdm = headersFor(get('component_demand_monthly'), 2026);
+  assert.deepEqual(cdm, [...MONTHLY.component_demand_monthly[1], ...months]);
+  assert.equal(cdm.length, 6 + 144);
+  const pv = headersFor(get('product_volumes'), 2026);
+  assert.deepEqual(pv.slice(0, 7), MONTHLY.product_volumes[1]);
+  assert.equal(pv[7], 'Units 2025'); assert.equal(pv[18], 'Units 2036');
+  assert.equal(pv[19], '2025-01'); assert.equal(pv.at(-1), '2036-12');
+  const bom = headersFor(get('bom_demand_monthly'), 2026);
+  assert.equal(bom[7], 'Qty Per Unit');
+  assert.deepEqual(bom.slice(0, 8), MONTHLY.bom_demand_monthly[1]);
+  assert.equal(bom.length, 8 + 144);
+  for (const n of Object.keys(MONTHLY)) assert.equal(get(n).pageLimit, 200, n);
 });
 
 test('headers equal spec section 6 exactly', () => {
   for (const f of manifest.feeds) {
+    if (!SPEC[f.feed]) continue;
     const expected = [...SPEC[f.feed][1]];
     if (WITH_DEMAND.has(f.feed)) for (let y = 2025; y <= 2036; y++) expected.push(`Demand ${y}`);
     assert.deepEqual(headersFor(f, 2026), expected, f.feed);
@@ -96,8 +119,8 @@ test('sqlColumnsFor excludes ROW_KEY and matches manifest columns', () => {
     const cols = sqlColumnsFor(f, 2026);
     assert.ok(!cols.includes('ROW_KEY'));
     assert.deepEqual(cols.slice(0, f.columns.length), f.columns.map((c) => c.sql));
-    assert.equal(cols.length, f.columns.length + (f.demandYears ? 12 : 0));
-    if (f.demandYears) assert.deepEqual(cols.slice(-2), ['DEMAND_2035', 'DEMAND_2036']);
+    assert.equal(cols.length, f.columns.length + (f.demandYears ? 12 : 0) + (f.demandMonths ? 144 : 0));
+    if (f.demandYears && !f.demandMonths) assert.deepEqual(cols.slice(-2), ['DEMAND_2035', 'DEMAND_2036']);
   }
 });
 
@@ -106,14 +129,14 @@ for (const f of loadManifest().feeds) {
     const file = path.join(root, f.sqlFile);
     assert.ok(fs.existsSync(file), 'sqlFile exists');
     const text = fs.readFileSync(file, 'utf8');
-    const sql = renderFeedSql(text, 2026, demandYearsFor(f, 2026));
+    const sql = renderFeedSql(text, 2026, demandYearsFor(f, 2026), demandMonthsFor(f, 2026));
     assert.ok(!sql.includes('{{'), 'no placeholder left after rendering');
     const { aliases, s } = finalSelect(sql);
     assert.equal(aliases[0], 'ROW_KEY');
     const expected = ['ROW_KEY', ...sqlColumnsFor(f, 2026)];
     assert.deepEqual(aliases, expected, 'aliases in manifest order');
     assert.equal(new Set(aliases).size, aliases.length, 'aliases unique');
-    const demand = aliases.filter((a) => /^DEMAND_\d{4}$/.test(a));
+    const demand = aliases.filter((a) => /^(DEMAND|UNITS)_\d{4}$/.test(a));
     assert.equal(demand.length, f.demandYears ? 12 : 0);
     assert.equal(/\{\{DEMAND:/.test(text), Boolean(f.demandYears), 'demand template only in demand feeds');
     // top-level ORDER BY / LIMIT
@@ -131,8 +154,8 @@ test('health.sql returns BASE_YEAR, PROBLEM_COUNT, PROBLEM_LIST', () => {
   assert.ok(!/\{\{/.test(sql));
 });
 
-test('paging: every feed starts at pageLimit 500; targetPageChars is 250000', () => {
-  for (const f of manifest.feeds) assert.equal(f.pageLimit, 500, f.feed);
+test('paging: every feed starts at pageLimit 500 (200 for monthly feeds); targetPageChars is 250000', () => {
+  for (const f of manifest.feeds) assert.equal(f.pageLimit, MONTHLY[f.feed] ? 200 : 500, f.feed);
   assert.equal(manifest.targetPageChars, 250000);
 });
 

@@ -403,6 +403,156 @@
           "type": "date"
         }
       ]
+    },
+    {
+      "feed": "product_volumes",
+      "tab": "Product_Volumes",
+      "sqlFile": "sql/feeds/product_volumes.sql",
+      "pageLimit": 200,
+      "columns": [
+        {
+          "sql": "PRODUCT_ID",
+          "header": "Product ID",
+          "type": "number"
+        },
+        {
+          "sql": "PRODUCT_DISPLAY_NAME",
+          "header": "Product Display Name",
+          "type": "string"
+        },
+        {
+          "sql": "PROJECT",
+          "header": "Project",
+          "type": "string"
+        },
+        {
+          "sql": "PROGRAM",
+          "header": "Program",
+          "type": "string"
+        },
+        {
+          "sql": "CUSTOMER",
+          "header": "Customer",
+          "type": "string"
+        },
+        {
+          "sql": "EMS",
+          "header": "EMS",
+          "type": "string"
+        },
+        {
+          "sql": "FLOW",
+          "header": "Flow",
+          "type": "string"
+        }
+      ],
+      "demandYears": {
+        "sqlPrefix": "UNITS_",
+        "firstYear": 2025,
+        "yearsAhead": 10,
+        "headerPrefix": "Units "
+      },
+      "demandMonths": {
+        "sqlPrefix": "M_",
+        "firstYear": 2025,
+        "yearsAhead": 10
+      }
+    },
+    {
+      "feed": "component_demand_monthly",
+      "tab": "Component_Demand_Monthly",
+      "sqlFile": "sql/feeds/component_demand_monthly.sql",
+      "pageLimit": 200,
+      "columns": [
+        {
+          "sql": "ME_EC",
+          "header": "ME_EC",
+          "type": "string"
+        },
+        {
+          "sql": "MPN",
+          "header": "MPN",
+          "type": "string"
+        },
+        {
+          "sql": "MANUFACTURER",
+          "header": "Manufacturer",
+          "type": "string"
+        },
+        {
+          "sql": "HW_CATEGORY",
+          "header": "HW Category",
+          "type": "string"
+        },
+        {
+          "sql": "HW_SUBCATEGORY",
+          "header": "HW Subcategory",
+          "type": "string"
+        },
+        {
+          "sql": "PRIMARY_ME_MS",
+          "header": "Primary ME_MS",
+          "type": "string"
+        }
+      ],
+      "demandMonths": {
+        "sqlPrefix": "M_",
+        "firstYear": 2025,
+        "yearsAhead": 10
+      }
+    },
+    {
+      "feed": "bom_demand_monthly",
+      "tab": "BOM_Demand_Monthly",
+      "sqlFile": "sql/feeds/bom_demand_monthly.sql",
+      "pageLimit": 200,
+      "columns": [
+        {
+          "sql": "ME_EC",
+          "header": "ME_EC",
+          "type": "string"
+        },
+        {
+          "sql": "MPN",
+          "header": "MPN",
+          "type": "string"
+        },
+        {
+          "sql": "MANUFACTURER",
+          "header": "Manufacturer",
+          "type": "string"
+        },
+        {
+          "sql": "PRODUCT",
+          "header": "Product",
+          "type": "string"
+        },
+        {
+          "sql": "PRODUCT_ID",
+          "header": "Product ID",
+          "type": "number"
+        },
+        {
+          "sql": "EMS",
+          "header": "EMS",
+          "type": "string"
+        },
+        {
+          "sql": "FLOW",
+          "header": "Flow",
+          "type": "string"
+        },
+        {
+          "sql": "QTY_PER_UNIT",
+          "header": "Qty Per Unit",
+          "type": "number"
+        }
+      ],
+      "demandMonths": {
+        "sqlPrefix": "M_",
+        "firstYear": 2025,
+        "yearsAhead": 10
+      }
     }
   ]
 }
