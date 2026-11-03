@@ -1,11 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert';
-import { makeEnv, encodeRows } from './helpers/gas-fakes.mjs';
+import { makeEnv, encodeRows, NEW_FEED_DEFS, NEW_FEED_TABS } from './helpers/gas-fakes.mjs';
 
 const TOKEN = 'b'.repeat(64);
 const RUN = '2026-10-30T07-00-03';
 const RUN2 = '2026-10-30T09-15-00';
-const TABS = ['Components', 'Multisource', 'Multisource_Members', 'Component_Usage', 'Products', 'MECL_Price'];
+const TABS = ['Components', 'Multisource', 'Multisource_Members', 'Component_Usage', 'Products', 'MECL_Price', ...NEW_FEED_TABS];
 const LOG_HEADERS = ['Run ID', 'Started', 'Finished', 'Feed', 'Rows', 'Source Refreshed At', 'Status', 'Message'];
 const HEALTH = {
   BASE_YEAR: 2026,
@@ -34,7 +34,7 @@ const PROD = {
   types: ['number', 'string', 'date'],
 };
 const PROD_ROWS = [[42, 'Inverter', '2027-01-15']];
-// Every begin lists all six tabs (in TABS order); feeds not under test are tiny and usually empty.
+// Every begin lists all fifteen tabs (in TABS order); feeds not under test are tiny and usually empty.
 const DEFS = [
   COMP,
   { feed: 'multisource', tab: 'Multisource', headers: ['ME_MS', 'Member Count'], types: ['string', 'number'] },
@@ -42,6 +42,7 @@ const DEFS = [
   { feed: 'component_usage', tab: 'Component_Usage', headers: ['ME_EC', 'Product ID'], types: ['string', 'number'] },
   PROD,
   { feed: 'mecl_price', tab: 'MECL_Price', headers: ['Price ID', 'ME_EC'], types: ['number', 'string'] },
+  ...NEW_FEED_DEFS,
 ];
 const FEED_NAMES = DEFS.map((d) => d.feed);
 
@@ -163,7 +164,7 @@ test('begin -> 2 chunks -> commit puts the sent rows live, snapshots CSV, logs O
   assert.match(log[0][1], /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/, 'R36: B1 stays an ISO UTC time');
   assert.deepStrictEqual(log[1].slice(0, 2), ['Base year', 2026]);
   assert.deepStrictEqual(log[3], LOG_HEADERS);
-  assert.strictEqual(log.length, 4 + 6);
+  assert.strictEqual(log.length, 4 + DEFS.length);
   assert.deepStrictEqual(log.slice(4).map((r) => [r[0], r[3], r[4], r[5], r[6], r[7]]),
     FEED_NAMES.map((f) => [RUN, f, { components: 3, products: 1 }[f] ?? 0, SRC, 'OK', '']));
   assert.match(log[4][1], BERLIN_FMT);
@@ -221,7 +222,7 @@ test('a second successful run inserts its log rows at row 5, above the earlier o
   chunk(e, RUN2, 'products', 1, [[43, 'Charger', null]]);
   assert.strictEqual(commit(e, RUN2).ok, true);
   const log = logData(e);
-  assert.deepStrictEqual(log.slice(4).map((r) => r[0]), [...Array(6).fill(RUN2), ...Array(6).fill(RUN)]);
+  assert.deepStrictEqual(log.slice(4).map((r) => r[0]), [...Array(DEFS.length).fill(RUN2), ...Array(DEFS.length).fill(RUN)]);
   // Inserted rows shift the older entries' formats with them.
   const sheet = e.ss.getSheetByName('_Refresh_Log');
   assert.strictEqual(sheet.getFormat(11, 5), '0');
@@ -314,6 +315,26 @@ test('once every live tab is swapped, later failures return ok:true with a warni
   assert.match(row[7], /props full/);
   assert.notStrictEqual(logData(e)[0][1], '', 'B1 still set');
   assert.ok(snapshots(e).folder('2026-10-30').file('products.csv'));
+});
+
+test('a commit sets the A1 note of the tabs listed in TAB_NOTES and no other', () => {
+  const e = env();
+  runProducts(e, RUN, PROD_ROWS);
+  assert.strictEqual(commit(e, RUN).ok, true);
+  const notes = e.context.MASTERDATA_CONFIG.TAB_NOTES;
+  assert.deepStrictEqual(Object.keys(notes), ['Product_Volumes', 'Component_Demand_Monthly', 'BOM_Demand_Monthly', 'BOM_Sources', 'Price_At_Demand', 'Savings_Levers', 'Quote_Health', 'Multisource_Health']);
+  assert.match(notes.Savings_Levers, /^One row per component, demand year and EMS\. Never add the lever columns together\./);
+  assert.strictEqual(e.ss.getSheetByName('Savings_Levers').getRange(1, 1).getNote(), notes.Savings_Levers);
+  for (const tab of Object.keys(notes)) assert.strictEqual(e.ss.getSheetByName(tab).getRange(1, 1).getNote(), notes[tab], tab);
+  for (const tab of ['Components', 'Products', 'BOM_Coverage']) assert.strictEqual(e.ss.getSheetByName(tab).getRange(1, 1).getNote(), '', `${tab} has no note`);
+});
+
+test('applyTabNotes_ skips tabs missing from the spreadsheet', () => {
+  const e = env();
+  e.ss.seed('Savings_Levers', [['A']]);
+  e.context.applyTabNotes_(e.ss);
+  assert.strictEqual(e.ss.getSheetByName('Savings_Levers').getRange(1, 1).getNote(), e.context.MASTERDATA_CONFIG.TAB_NOTES.Savings_Levers);
+  assert.deepStrictEqual(e.ss.names(), ['Savings_Levers']);
 });
 
 test('chunk with a different runId is rejected', () => {
@@ -440,8 +461,8 @@ test('bad requests are rejected without side effects', () => {
   const beginWith = (feeds) => e.call({ action: 'begin', runId: RUN, baseYear: 2026, feeds, health: HEALTH });
   const feeds = feedsFor({});
   assert.deepStrictEqual(beginWith(feeds.slice(1)), everyTab);
-  assert.deepStrictEqual(beginWith([...feeds.slice(0, 5), { ...feeds[5], tab: '_Refresh_Log' }]), everyTab);
-  assert.deepStrictEqual(beginWith([...feeds.slice(0, 5), { ...feeds[5], tab: 'Products' }]), everyTab);
+  assert.deepStrictEqual(beginWith([...feeds.slice(0, -1), { ...feeds.at(-1), tab: '_Refresh_Log' }]), everyTab);
+  assert.deepStrictEqual(beginWith([...feeds.slice(0, -1), { ...feeds.at(-1), tab: 'Products' }]), everyTab);
   assert.strictEqual(e.stored.ACTIVE_RUN, undefined);
   assert.strictEqual(e.ss.getSheets().length, 0);
   begin(e, RUN, { products: 1 });

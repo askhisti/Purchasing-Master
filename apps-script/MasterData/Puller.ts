@@ -401,10 +401,11 @@ function processInboxRun_(entry, startMs, current) {
       if (again.error) return failInboxRun_(runId, again.error, current.startedAt);
       rows = again.rows;
     }
+    var sliceRows = Math.max(1, Math.floor(MASTERDATA_CONFIG.PULL_SLICE_CELLS / f.headers.length));
     while (f.staged < f.rowCount) {
       var sliceStart = pullerNow_();
       if (sliceStart - startMs + lastSliceMs > budget) return paused;
-      var slice = rows.slice(f.staged, f.staged + MASTERDATA_CONFIG.PULL_SLICE_ROWS);
+      var slice = rows.slice(f.staged, f.staged + sliceRows);
       var bad = stageRows_(run, f, f.seqs.length + 1, slice);
       if (bad) return failInboxRun_(runId, bad, current.startedAt);
       lastSliceMs = pullerNow_() - sliceStart;

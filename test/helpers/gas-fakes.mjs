@@ -6,6 +6,10 @@ import path from 'node:path';
 import vm from 'node:vm';
 import zlib from 'node:zlib';
 
+// The nine feeds added after the first six, one minimal definition each (feed name = lower-cased tab).
+export const NEW_FEED_TABS = ['Product_Volumes', 'Component_Demand_Monthly', 'BOM_Demand_Monthly', 'BOM_Sources', 'Price_At_Demand', 'Savings_Levers', 'Quote_Health', 'Multisource_Health', 'BOM_Coverage'];
+export const NEW_FEED_DEFS = NEW_FEED_TABS.map((tab) => ({ feed: tab.toLowerCase(), tab, headers: ['ME_EC', 'Value'], types: ['string', 'number'] }));
+
 const DEFAULT_ROWS = 1000;
 const DEFAULT_COLS = 26;
 
@@ -25,6 +29,9 @@ class FakeRange {
     return this;
   }
   setValue(v) { return this.setValues([[v]]); }
+  // Notes attach to the top-left cell of the range (a multi-cell range is not used by the code).
+  setNote(text) { this.sheet.notes[`${this.row},${this.col}`] = text; return this; }
+  getNote() { return this.sheet.notes[`${this.row},${this.col}`] ?? ''; }
   getValues() {
     const out = [];
     for (let i = 0; i < this.numRows; i++) {
@@ -87,6 +94,7 @@ class FakeSheet {
     this.id = ++ss.nextId;
     this.rows = []; // rows[r-1][c-1]
     this.fmts = []; // fmts[r-1][c-1], undefined = never set / cleared
+    this.notes = {}; // 'row,col' -> note text
     this.maxRows = DEFAULT_ROWS;
     this.maxCols = DEFAULT_COLS;
   }

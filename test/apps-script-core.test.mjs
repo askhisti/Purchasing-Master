@@ -3,6 +3,7 @@ import assert from 'node:assert';
 import fs from 'node:fs';
 import path from 'node:path';
 import vm from 'node:vm';
+import { NEW_FEED_TABS } from './helpers/gas-fakes.mjs';
 
 const dir = path.join(process.cwd(), 'apps-script', 'MasterData');
 
@@ -113,7 +114,7 @@ test('snapshotDate_ and part file names follow R21', () => {
   assert.strictEqual(c.partSeq_('components.part0001.csv', null), 1);
 });
 
-const TABS = ['Components', 'Multisource', 'Multisource_Members', 'Component_Usage', 'Products', 'MECL_Price'];
+const TABS = ['Components', 'Multisource', 'Multisource_Members', 'Component_Usage', 'Products', 'MECL_Price', ...NEW_FEED_TABS];
 
 test('validateBegin_ accepts a well-formed begin and rejects bad ones', () => {
   const c = load();

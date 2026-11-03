@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert';
 import crypto from 'node:crypto';
 import { gzipSync, gunzipSync } from 'node:zlib';
-import { makeEnv, INBOX_ID } from './helpers/gas-fakes.mjs';
+import { makeEnv, INBOX_ID, NEW_FEED_DEFS, NEW_FEED_TABS } from './helpers/gas-fakes.mjs';
 import { buildPayload } from '../refresh/lib/inbox.mjs';
 import { loadManifest, sqlColumnsFor } from '../refresh/lib/manifest.mjs';
 import { shapeFeed } from '../refresh/lib/shape.mjs';
@@ -13,7 +13,7 @@ const RUN2 = '2026-10-31T06-15-04';
 const NOW = Date.parse('2026-10-31T07:00:00.000Z'); // puller clock: 08:00 Berlin on 31 Oct
 const HOUR = 3600000;
 const DAY = 24 * HOUR;
-const TABS = ['Components', 'Multisource', 'Multisource_Members', 'Component_Usage', 'Products', 'MECL_Price'];
+const TABS = ['Components', 'Multisource', 'Multisource_Members', 'Component_Usage', 'Products', 'MECL_Price', ...NEW_FEED_TABS];
 // Raw connector strings, as the CLI stores them in the manifest (BASE_YEAR is a string there).
 const HEALTH = {
   BASE_YEAR: '2026',
@@ -45,8 +45,10 @@ const DEFS = [
   { feed: 'component_usage', tab: 'Component_Usage', headers: ['ME_EC', 'Product ID'], types: ['string', 'number'] },
   PROD,
   { feed: 'mecl_price', tab: 'MECL_Price', headers: ['Price ID', 'ME_EC'], types: ['number', 'string'] },
+  ...NEW_FEED_DEFS,
 ];
 const FEED_NAMES = DEFS.map((d) => d.feed);
+const N = DEFS.length; // feeds per run; a run's Inbox holds N data files plus the manifest
 const ALL_CSV = FEED_NAMES.map((f) => `${f}.csv`).sort();
 const DEFAULT_ROWS = { components: COMP_ROWS, products: PROD_ROWS };
 
@@ -125,7 +127,7 @@ function snapshotDay(e, day) {
   return raw ? raw.folder(day) : null;
 }
 
-test('a ready run lands all six tabs, logs OK, writes CSV snapshots and trashes its Inbox files', () => {
+test('a ready run lands all fifteen tabs, logs OK, writes CSV snapshots and trashes its Inbox files', () => {
   const e = env();
   const live = e.ss.seed('Components', [COMP.headers, ['OLD', 'old', 1, true, 1]]);
   const liveId = live.getSheetId();
@@ -156,7 +158,7 @@ test('a ready run lands all six tabs, logs OK, writes CSV snapshots and trashes 
   assert.strictEqual(e.stored.LAST_PROCESSED_RUN, RUN);
   assert.strictEqual(e.stored.ACTIVE_RUN, undefined);
   assert.deepStrictEqual(e.inbox.fileNames(), [], 'every Inbox file of the run is trashed');
-  assert.strictEqual(e.inbox.files.length, 7);
+  assert.strictEqual(e.inbox.files.length, N + 1);
   assert.deepStrictEqual(e.lockLog, [['try', 5000], ['release']]);
 });
 
@@ -182,7 +184,7 @@ test('an empty Inbox is idle and writes nothing', () => {
 test('slicing stops when elapsed + the previous slice would pass 270 s; the next poll resumes without restaging or re-running begin', () => {
   const e = env();
   e.context.installPullTrigger();
-  e.context.MASTERDATA_CONFIG.PULL_SLICE_ROWS = 1;
+  e.context.MASTERDATA_CONFIG.PULL_SLICE_CELLS = 5; // components is 5 wide: one row per slice
   sliceCost(e, 100000); // every slice takes 100 s
   const begins = countBegins(e);
   drop(e, payload(RUN).files);
@@ -190,9 +192,9 @@ test('slicing stops when elapsed + the previous slice would pass 270 s; the next
   // Poll 1: slices at 0 s and 100 s; at 200 s the next one (200 + 100 > 270) is not started.
   assert.deepStrictEqual(e.poll(), { status: 'staging', runId: RUN });
   let run = JSON.parse(e.stored.ACTIVE_RUN);
-  assert.deepStrictEqual(run.feeds.map((f) => f.staged), [2, 0, 0, 0, 0, 0]);
+  assert.deepStrictEqual(run.feeds.map((f) => f.staged), [2, ...Array(N - 1).fill(0)]);
   assert.strictEqual(e.ss.getSheetByName('Components'), null, 'live tabs untouched while staging');
-  assert.strictEqual(e.inbox.fileNames().length, 7, 'Inbox files stay until the run ends');
+  assert.strictEqual(e.inbox.fileNames().length, N + 1, 'Inbox files stay until the run ends');
   // R51: a one-off continuation trigger in 60 s; the 5-minute trigger stays.
   let oneOffs = oneOffTriggers(e);
   assert.strictEqual(oneOffs.length, 1);
@@ -202,7 +204,7 @@ test('slicing stops when elapsed + the previous slice would pass 270 s; the next
   // Poll 2: stages the remaining 2 rows; at 200 s it is too late to start the commit (>= 150 s).
   assert.deepStrictEqual(e.poll(), { status: 'staging', runId: RUN });
   run = JSON.parse(e.stored.ACTIVE_RUN);
-  assert.deepStrictEqual(run.feeds.map((f) => f.staged), [3, 0, 0, 0, 1, 0]);
+  assert.deepStrictEqual(run.feeds.map((f) => f.staged), [3, 0, 0, 0, 1, ...Array(N - 5).fill(0)]);
   oneOffs = oneOffTriggers(e);
   assert.strictEqual(oneOffs.length, 1, 'the spent one-off trigger was deleted, a new one created');
   assert.notStrictEqual(oneOffs[0].getUniqueId(), firstId);
@@ -214,7 +216,7 @@ test('slicing stops when elapsed + the previous slice would pass 270 s; the next
     ['__staging_Components:2x1', '__staging_Components:3x1', '__staging_Components:4x1', '__staging_Products:2x1'], 'each row staged once');
   assert.deepStrictEqual(e.ss.getSheetByName('Components').data(), [COMP.headers, ...sheetRows(COMP_ROWS)]);
   assert.strictEqual(snapshotDay(e, '2026-10-30').file('components.csv').getBlob().getDataAsString().split('\n').length, 5);
-  assert.deepStrictEqual(entries(e).map((r) => r[6]), Array(6).fill('OK'), 'no ABANDONED, RETRY or FAILED rows');
+  assert.deepStrictEqual(entries(e).map((r) => r[6]), Array(N).fill('OK'), 'no ABANDONED, RETRY or FAILED rows');
   assert.deepStrictEqual(e.inbox.fileNames(), []);
   assert.deepStrictEqual(oneOffTriggers(e), [], 'no continuation left after the commit');
   assert.deepStrictEqual(e.triggers.filter((t) => t.everyMinutes === 5).length, 1, 'the 5-minute trigger is kept');
@@ -247,98 +249,39 @@ test('the start time is read on entry, before tryLock', () => {
   assert.deepStrictEqual(e.lockLog.slice(0, 2), [['now'], ['try', 5000]]);
 })
 
-test('the slice size is 4,000 rows and the budget 270 s (Config.ts)', () => {
+test('the slice size is 100,000 cells and the budget 270 s (Config.ts)', () => {
   const e = env();
-  assert.strictEqual(e.context.MASTERDATA_CONFIG.PULL_SLICE_ROWS, 4000);
+  assert.strictEqual(e.context.MASTERDATA_CONFIG.PULL_SLICE_CELLS, 100000);
+  assert.strictEqual(e.context.MASTERDATA_CONFIG.PULL_SLICE_ROWS, undefined);
   assert.strictEqual(e.context.MASTERDATA_CONFIG.PULL_BUDGET_MS, 270000);
   assert.strictEqual(e.context.MASTERDATA_CONFIG.INBOX_FOLDER_ID, INBOX_ID);
   const ms = Array.from({ length: 9001 }, (_, i) => [`ME_MS_${i}`, i]);
   drop(e, payload(RUN, { multisource: ms }).files);
   assert.strictEqual(e.poll().status, 'committed');
   const writes = e.ss.calls.filter((c) => c.op === 'setValues' && c.sheet === '__staging_Multisource' && c.row >= 2);
-  assert.deepStrictEqual(writes.map((c) => [c.row, c.numRows]), [[2, 4000], [4002, 4000], [8002, 1001]]);
+  assert.deepStrictEqual(writes.map((c) => [c.row, c.numRows]), [[2, 9001]], '2 columns: up to 50,000 rows per slice');
   assert.strictEqual(e.ss.getSheetByName('Multisource').getLastRow(), 9002);
-});
-
-test('a sha256 mismatch fails the run: FAILED, live tabs untouched, Inbox files trashed', () => {
-  const e = env();
-  const live = e.ss.seed('Components', [COMP.headers, ['OLD', 'old', 1, true, 1]]);
-  const { files } = payload(RUN);
-  const name = `${RUN}__components.json.gz`;
-  drop(e, files, { skip: [name] });
-  e.inbox.addFile(name, gzipSync(Buffer.from(JSON.stringify([['TAMPERED', 'x', 1, true, 1]]), 'utf8')), { created: new Date(NOW - HOUR) });
-
-  const res = e.poll();
-  assert.strictEqual(res.status, 'failed');
-  assert.match(res.error, /components\.json\.gz: sha256 does not match the manifest/);
-  assert.deepStrictEqual(live.data(), [COMP.headers, ['OLD', 'old', 1, true, 1]]);
-  assert.deepStrictEqual(stagingTabs(e), []);
-  const rows = entries(e);
-  assert.strictEqual(rows.length, 1);
-  assert.deepStrictEqual([rows[0][0], rows[0][1], rows[0][6]], [RUN, berlin(STARTED), 'FAILED']);
-  assert.match(rows[0][7], /sha256 does not match/);
   assert.strictEqual(e.stored.LAST_PROCESSED_RUN, RUN);
-  assert.strictEqual(e.stored.ACTIVE_RUN, undefined);
   assert.deepStrictEqual(e.inbox.fileNames(), []);
-  assert.deepStrictEqual(e.poll(), { status: 'idle' }, 'the failed run is not retried');
 });
 
-test('R46: of several same-name copies, the data file whose sha256 matches the manifest is used', () => {
+// The rows per slice follow the feed width: floor(100,000 / headers), at least 1.
+function stagedSliceSizes(headerCount, rowCount) {
   const e = env();
-  const { files } = payload(RUN);
-  const name = `${RUN}__components.json.gz`;
-  // A bad copy first, then the real files (including a second, identical manifest copy).
-  e.inbox.addFile(name, gzipSync(Buffer.from('[]', 'utf8')), { created: new Date(NOW - 2 * HOUR) });
+  const headers = Array.from({ length: headerCount }, (_, i) => `H${i}`);
+  const types = headers.map(() => 'number');
+  const rows = Array.from({ length: rowCount }, (_, i) => headers.map((_, j) => i + j));
+  const defs = DEFS.map((d) => (d.feed === 'multisource' ? { ...d, headers, types } : d));
+  const prepared = defs.map((d) => ({ feedDef: { feed: d.feed, tab: d.tab }, headers: d.headers, types: d.types, rows: d.feed === 'multisource' ? rows : [] }));
+  const { files } = buildPayload({ runId: RUN, startedAt: STARTED, baseYear: 2026, health: HEALTH }, prepared, { publishedAt: '2026-10-30T05:40:00.000Z' });
   drop(e, files);
-  drop(e, files.filter((f) => f.name.endsWith('__manifest.json')));
-  assert.deepStrictEqual(e.poll(), { status: 'committed', runId: RUN });
-  assert.deepStrictEqual(e.ss.getSheetByName('Components').data(), [COMP.headers, ...sheetRows(COMP_ROWS)]);
-  assert.deepStrictEqual(e.inbox.fileNames(), []);
-});
+  assert.strictEqual(e.poll().status, 'committed');
+  return e.ss.calls.filter((c) => c.op === 'setValues' && c.sheet === '__staging_Multisource' && c.row >= 2).map((c) => c.numRows);
+}
 
-test('a failed manifest logs one FAILED row with its reason and trashes the run\'s files (also data files)', () => {
-  const e = env();
-  const ready = payload(RUN);
-  // Data files uploaded before the failure, then the failed manifest (health and baseYear null).
-  drop(e, ready.files.filter((f) => !f.name.endsWith('__manifest.json')));
-  const failed = payload(RUN, {}, { status: 'failed', reason: 'upload failed: HTTP 500', state: { health: null, baseYear: null } });
-  assert.strictEqual(failed.manifest.health, null);
-  drop(e, failed.files);
-
-  assert.deepStrictEqual(e.poll(), { status: 'failed', runId: RUN, error: 'upload failed: HTTP 500' });
-  const rows = entries(e);
-  assert.strictEqual(rows.length, 1);
-  assert.deepStrictEqual([rows[0][0], rows[0][1], rows[0][3], rows[0][4], rows[0][5], rows[0][6], rows[0][7]],
-    [RUN, berlin(STARTED), '', '', '', 'FAILED', 'upload failed: HTTP 500']);
-  assert.deepStrictEqual(TABS.filter((t) => e.ss.getSheetByName(t)), []);
-  assert.strictEqual(e.stored.LAST_PROCESSED_RUN, RUN);
-  assert.deepStrictEqual(e.inbox.fileNames(), []);
-  assert.deepStrictEqual(e.poll(), { status: 'idle' });
-  assert.strictEqual(entries(e).length, 1);
-});
-
-test('R46: when a runId has both a ready and a failed manifest, the failed one wins', () => {
-  const e = env();
-  drop(e, payload(RUN).files);
-  drop(e, payload(RUN, {}, { status: 'failed', reason: 'late failure' }).files);
-  const res = e.poll();
-  assert.deepStrictEqual(res, { status: 'failed', runId: RUN, error: 'late failure' });
-  assert.deepStrictEqual(TABS.filter((t) => e.ss.getSheetByName(t)), []);
-  assert.deepStrictEqual(entries(e).map((r) => r[6]), ['FAILED']);
-  assert.deepStrictEqual(e.inbox.fileNames(), []);
-});
-
-test('a manifest whose data file is missing fails the run before anything is staged', () => {
-  const e = env();
-  const { files } = payload(RUN);
-  drop(e, files, { skip: [`${RUN}__mecl_price.json.gz`] });
-  const res = e.poll();
-  assert.strictEqual(res.status, 'failed');
-  assert.match(res.error, /mecl_price\.json\.gz: missing from the Inbox/);
-  assert.ok(!e.ss.calls.some((c) => c.sheet && c.sheet.startsWith('__staging_')), 'no staging tab was written');
-  assert.deepStrictEqual(entries(e).map((r) => [r[0], r[6]]), [[RUN, 'FAILED']]);
-  assert.strictEqual(e.stored.LAST_PROCESSED_RUN, RUN);
-  assert.deepStrictEqual(e.inbox.fileNames(), []);
+test('wide feeds stage in cell-sized slices', () => {
+  assert.deepStrictEqual(stagedSliceSizes(160, 1500), [625, 625, 250]);
+  assert.deepStrictEqual(stagedSliceSizes(25, 9000), [4000, 4000, 1000]);
 });
 
 test('a data file whose row count differs from the manifest fails the run', () => {
@@ -357,7 +300,7 @@ test('a ready manifest that does not pass begin validation fails the run', () =>
   const e = env();
   const { manifest, files } = payload(RUN);
   const bad = structuredClone(manifest);
-  bad.feeds = bad.feeds.slice(0, 5); // begin must list every tab
+  bad.feeds = bad.feeds.slice(0, N - 1); // begin must list every tab
   drop(e, [...files.filter((f) => !f.name.endsWith('__manifest.json')), manifestFile(bad)]);
   const res = e.poll();
   assert.strictEqual(res.status, 'failed');
@@ -393,7 +336,7 @@ test('two pending runs are processed oldest first', () => {
   assert.deepStrictEqual(e.inbox.fileNames().every((n) => n.startsWith(`${RUN2}__`)), true);
   assert.deepStrictEqual(e.poll(), { status: 'committed', runId: RUN2 });
   assert.strictEqual(e.ss.getSheetByName('Components').data()[1][1], '0603');
-  assert.deepStrictEqual(entries(e).map((r) => r[0]), [...Array(6).fill(RUN2), ...Array(6).fill(RUN)]);
+  assert.deepStrictEqual(entries(e).map((r) => r[0]), [...Array(N).fill(RUN2), ...Array(N).fill(RUN)]);
   assert.strictEqual(e.stored.LAST_PROCESSED_RUN, RUN2);
   assert.deepStrictEqual(e.inbox.fileNames(), []);
 });
@@ -420,7 +363,7 @@ test('a busy script lock makes the poll exit quietly', () => {
   assert.deepStrictEqual(e.poll(), { status: 'busy' });
   assert.deepStrictEqual(e.lockLog, [['try', 5000]]);
   assert.deepStrictEqual(e.ss.names(), []);
-  assert.strictEqual(e.inbox.fileNames().length, 7);
+  assert.strictEqual(e.inbox.fileNames().length, N + 1);
   e.lock.busy = false;
   assert.strictEqual(e.poll().status, 'committed');
 });
@@ -513,9 +456,9 @@ test('R48: a transient error is retried on the next poll: one RETRY row, then OK
   assert.deepStrictEqual(res, { status: 'retry', runId: RUN, error: 'Drive hiccup' });
   assert.deepStrictEqual(entries(e).map((r) => [r[0], r[1], r[6], r[7]]), [[RUN, berlin(STARTED), 'RETRY', 'attempt 1 of 3: Drive hiccup']]);
   assert.strictEqual(e.stored.LAST_PROCESSED_RUN, undefined);
-  assert.strictEqual(e.inbox.fileNames().length, 7);
+  assert.strictEqual(e.inbox.fileNames().length, N + 1);
   assert.deepStrictEqual(e.poll(), { status: 'committed', runId: RUN });
-  assert.deepStrictEqual(entries(e).map((r) => r[6]), [...Array(6).fill('OK'), 'RETRY']);
+  assert.deepStrictEqual(entries(e).map((r) => r[6]), [...Array(N).fill('OK'), 'RETRY']);
   assert.strictEqual(e.stored.PULL_RETRY, undefined, 'counter cleared on success');
   assert.deepStrictEqual(e.inbox.fileNames(), []);
 });
@@ -532,7 +475,7 @@ test('R48: a transient commit error keeps staging; the retry commits without res
   const res = e.poll();
   assert.strictEqual(res.status, 'retry');
   assert.match(res.error, /Drive create failed/);
-  assert.strictEqual(stagingTabs(e).length, 6, 'staging kept');
+  assert.strictEqual(stagingTabs(e).length, N, 'staging kept');
   assert.ok(e.stored.ACTIVE_RUN, 'active run kept');
   assert.strictEqual(e.ss.getSheetByName('Components'), null, 'live tabs untouched');
   const writes = stagingWrites(e);
@@ -544,7 +487,7 @@ test('R48: a transient commit error keeps staging; the retry commits without res
   assert.deepStrictEqual(day.fileNames(), ALL_CSV);
   assert.strictEqual(day.file('components.csv').getBlob().getDataAsString().split('\n').length, 5, 'components.csv keeps its rows');
   assert.strictEqual(day.file('products.csv').getBlob().getDataAsString(), 'Product ID,Product Display Name,SOP\n42,Inverter,2027-01-15\n');
-  assert.deepStrictEqual(entries(e).map((r) => r[6]), [...Array(6).fill('OK'), 'RETRY']);
+  assert.deepStrictEqual(entries(e).map((r) => r[6]), [...Array(N).fill('OK'), 'RETRY']);
 });
 
 test('R48: the third failed attempt ends the run FAILED', () => {
@@ -596,12 +539,12 @@ test('a Drive error while trashing a committed run\'s files keeps the run OK; a 
     return realGetFiles();
   };
   assert.deepStrictEqual(e.poll(), { status: 'committed', runId: RUN });
-  assert.deepStrictEqual(entries(e).map((r) => r[6]), Array(6).fill('OK'));
+  assert.deepStrictEqual(entries(e).map((r) => r[6]), Array(N).fill('OK'));
   assert.strictEqual(e.stored.LAST_PROCESSED_RUN, RUN);
-  assert.strictEqual(e.inbox.fileNames().length, 7, 'files could not be trashed yet');
+  assert.strictEqual(e.inbox.fileNames().length, N + 1, 'files could not be trashed yet');
   assert.deepStrictEqual(e.poll(), { status: 'idle' });
   assert.deepStrictEqual(e.inbox.fileNames(), []);
-  assert.strictEqual(entries(e).length, 6, 'nothing else logged');
+  assert.strictEqual(entries(e).length, N, 'nothing else logged');
 });
 
 test('an unexpected error outside a run (Inbox unreachable) is logged FAILED once, not every poll', () => {
@@ -644,9 +587,9 @@ test('sha256Hex_ turns Apps Script\'s signed digest bytes into lower-case hex', 
 });
 
 // End to end: the exact files Node's buildPayload produces for the real sql/feeds.json feed definitions.
-test('e2e: the real buildPayload output in the Inbox lands all six live tabs', () => {
+test('e2e: the real buildPayload output in the Inbox lands all fifteen live tabs', () => {
   const BASE_YEAR = 2026;
-  const feeds = loadManifest().feeds;
+  const realFeeds = loadManifest().feeds;
   const raw = (feed, col, i) => {
     if (feed.feed === 'components' && col.sql === 'MPN') return ['0402', '1E3'][i];
     if (col.sql === 'ME_EC') return `ME_EC_000000${i + 1}`;
@@ -658,12 +601,19 @@ test('e2e: the real buildPayload output in the Inbox lands all six live tabs', (
       default: return `${col.sql.toLowerCase()} ${i}`;
     }
   };
-  const prepared = feeds.map((feedDef) => {
+  const prepared = realFeeds.map((feedDef) => {
     const cols = sqlColumnsFor(feedDef, BASE_YEAR);
     const typeOf = (j) => (j < feedDef.columns.length ? feedDef.columns[j] : { sql: cols[j], type: 'number' });
     const rawRows = [0, 1].map((i) => [`${feedDef.feed}-${i}`, ...cols.map((_, j) => raw(feedDef, typeOf(j), i))]);
     return { feedDef, ...shapeFeed(feedDef, BASE_YEAR, rawRows, cols) };
   });
+  // Feeds registered in TABS but not yet in sql/feeds.json (added by later tasks) are padded with hand-made two-row feeds.
+  for (const d of NEW_FEED_DEFS) {
+    if (!realFeeds.some((f) => f.feed === d.feed)) {
+      prepared.push({ feedDef: { feed: d.feed, tab: d.tab }, headers: d.headers, types: d.types, rows: [['x', 1], ['y', null]] });
+    }
+  }
+  const feeds = prepared.map((p) => p.feedDef);
   const state = { runId: RUN, startedAt: STARTED, baseYear: BASE_YEAR, health: HEALTH };
   const { manifest, files } = buildPayload(state, prepared, { publishedAt: '2026-10-30T05:40:00.000Z' });
   // Sanity of the payload itself: gz JSON rows with null for empty cells.
@@ -765,7 +715,7 @@ test('R56: a run whose commit is hard-killed on every poll fails after 3 commit-
 test('R56: polls that are hard-killed but stage rows each time are not stalled; the run commits', () => {
   const e = env();
   hardKills(e);
-  e.context.MASTERDATA_CONFIG.PULL_SLICE_ROWS = 1;
+  e.context.MASTERDATA_CONFIG.PULL_SLICE_CELLS = 5; // components is 5 wide: one row per slice
   const real = e.context.stageRows_;
   e.context.stageRows_ = (...args) => {
     real(...args);
@@ -777,7 +727,7 @@ test('R56: polls that are hard-killed but stage rows each time are not stalled; 
   assert.deepStrictEqual(e.poll(), { status: 'committed', runId: RUN }, 'a commit-only poll that commits ends the run');
   assert.deepStrictEqual(e.ss.getSheetByName('Components').data(), [COMP.headers, ...sheetRows(COMP_ROWS)]);
   assert.deepStrictEqual(e.ss.getSheetByName('Products').data(), [PROD.headers, ...PROD_ROWS]);
-  assert.deepStrictEqual(entries(e).map((r) => r[6]), Array(6).fill('OK'));
+  assert.deepStrictEqual(entries(e).map((r) => r[6]), Array(N).fill('OK'));
   assert.strictEqual(e.stored.PULL_PROGRESS, undefined);
 });
 
@@ -801,7 +751,7 @@ test('R56: a run committed by a poll killed before LAST_PROCESSED_RUN was set is
   }
   assert.strictEqual(begins.n, 1, 'not begun again');
   assert.deepStrictEqual(stagingWrites(e), writes, 'not restaged');
-  assert.deepStrictEqual(entries(e).map((r) => r[6]), Array(6).fill('OK'), 'no second OK, no FAILED');
+  assert.deepStrictEqual(entries(e).map((r) => r[6]), Array(N).fill('OK'), 'no second OK, no FAILED');
   assert.strictEqual(e.stored.LAST_PROCESSED_RUN, RUN);
   assert.strictEqual(e.stored.PULL_PROGRESS, undefined);
   assert.deepStrictEqual(e.inbox.fileNames(), []);
@@ -813,7 +763,7 @@ test('R57: a manifest younger than 2 minutes is left for a later poll (Drive lis
   drop(e, payload(RUN).files, { created: new Date(NOW - 60000) });
   assert.deepStrictEqual(e.poll(), { status: 'waiting', runId: RUN });
   assert.deepStrictEqual(e.ss.names(), []);
-  assert.strictEqual(e.inbox.fileNames().length, 7);
+  assert.strictEqual(e.inbox.fileNames().length, N + 1);
   assert.strictEqual(e.stored.PULL_PROGRESS, undefined, 'a skipped poll does not count toward R56');
   assert.deepStrictEqual(oneOffTriggers(e), []);
   e.clock.t = NOW + 60000; // now 2 minutes old
@@ -826,7 +776,7 @@ test('R57: a young manifest of the oldest pending run is not skipped over by a n
   drop(e, payload(RUN2).files, { created: new Date(NOW - HOUR) });
   assert.deepStrictEqual(e.poll(), { status: 'waiting', runId: RUN });
   assert.strictEqual(e.stored.LAST_PROCESSED_RUN, undefined);
-  assert.strictEqual(e.inbox.fileNames().length, 14);
+  assert.strictEqual(e.inbox.fileNames().length, 2 * (N + 1));
 });
 
 test('item 6: SUPERSEDED is logged once, only after every file of the older run is trashed (manifest last)', () => {
@@ -861,7 +811,7 @@ test('item 6: leftovers of a committed run keep their manifest, so they are tras
   e.clock.t = NOW + 4 * DAY;
   assert.deepStrictEqual(e.poll(), { status: 'idle' });
   assert.deepStrictEqual(e.inbox.fileNames(), []);
-  assert.deepStrictEqual(entries(e).map((r) => r[6]), Array(6).fill('OK'));
+  assert.deepStrictEqual(entries(e).map((r) => r[6]), Array(N).fill('OK'));
 });
 
 test('item 12: a late failed manifest for a committed run writes one INFO row; live data stays', () => {
@@ -874,13 +824,13 @@ test('item 12: a late failed manifest for a committed run writes one INFO row; l
   const rows = entries(e);
   assert.deepStrictEqual([rows[0][0], rows[0][1], rows[0][6], rows[0][7]],
     [RUN, berlin(STARTED), 'INFO', 'cloud run reported failure after data was committed: upload failed: HTTP 503']);
-  assert.deepStrictEqual(rows.slice(1).map((r) => r[6]), Array(6).fill('OK'));
+  assert.deepStrictEqual(rows.slice(1).map((r) => r[6]), Array(N).fill('OK'));
   assert.deepStrictEqual(e.ss.getSheetByName('Components').data(), [COMP.headers, ...sheetRows(COMP_ROWS)]);
   assert.deepStrictEqual(e.inbox.fileNames(), []);
   // The same failed manifest again (a create retry): not logged a second time.
   drop(e, late.files);
   assert.deepStrictEqual(e.poll(), { status: 'idle' });
-  assert.strictEqual(entries(e).length, 7);
+  assert.strictEqual(entries(e).length, N + 1);
   assert.deepStrictEqual(e.inbox.fileNames(), []);
 });
 

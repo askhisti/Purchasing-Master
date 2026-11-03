@@ -52,6 +52,14 @@ function appendStagedRows_(ss, tab, startRow, rows, formats) {
   writeBlock_(sheet, startRow, rows, formats);
 }
 
+// Sets the A1 note of every tab in MASTERDATA_CONFIG.TAB_NOTES; tabs missing from the spreadsheet are skipped.
+function applyTabNotes_(ss) {
+  Object.keys(MASTERDATA_CONFIG.TAB_NOTES).forEach(function (tab) {
+    var sheet = ss.getSheetByName(tab);
+    if (sheet) sheet.getRange(1, 1).setNote(MASTERDATA_CONFIG.TAB_NOTES[tab]);
+  });
+}
+
 // R23: swap keeps each live tab's identity (gid links, formulas, filters survive).
 // items: [{tab, rows, cols}] = the staged extent (header + data rows, header width).
 // Live tab missing: the staging tab is renamed and shown. Otherwise the staged block (values + formats)

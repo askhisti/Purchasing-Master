@@ -194,6 +194,9 @@ function commitRun_(req, retryable) {
   step('committed run', function () {
     PropertiesService.getScriptProperties().setProperty(MASTERDATA_CONFIG.LAST_COMMITTED_RUN_PROPERTY, run.runId);
   });
+  step('tab notes', function () {
+    applyTabNotes_(ss);
+  });
   step('clear active run', clearActiveRun_);
   step('snapshot', function () {
     run.feeds.forEach(function (f) {
