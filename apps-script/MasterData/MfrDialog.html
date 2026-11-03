@@ -26,8 +26,15 @@
   <div id="status"></div>
 
 <script>
-  var checked = {}; // "category\u0001subcategory" -> true; kept across reloads of the tree
+  var checked = {}; // "category\u0001subcategory" -> true; kept across reloads of the tree (keys gone from it are pruned)
   var KEY = '\u0001';
+  var busy = false; // a create is running: Create and the toggle stay disabled
+  var treeReady = false; // the current tree has loaded
+
+  function updateControls() {
+    document.getElementById('create').disabled = busy || !treeReady;
+    document.getElementById('onlyUsed').disabled = busy;
+  }
 
   function el(tag, cls, text) {
     var e = document.createElement(tag);
@@ -44,7 +51,15 @@
 
   function showError(err) {
     setStatus(el('div', 'error', String(err && err.message ? err.message : err)));
-    document.getElementById('create').disabled = false;
+  }
+
+  // Drops ticked keys that the reloaded tree no longer has, so they are never sent.
+  function pruneChecked(tree) {
+    var present = {};
+    tree.forEach(function (c) {
+      c.subcategories.forEach(function (s) { present[c.category + KEY + s.subcategory] = true; });
+    });
+    Object.keys(checked).forEach(function (k) { if (!present[k]) delete checked[k]; });
   }
 
   function renderTree(tree) {
@@ -85,15 +100,17 @@
   }
 
   function loadTree() {
-    var create = document.getElementById('create');
-    create.disabled = true;
+    treeReady = false;
+    updateControls();
     document.getElementById('meta').textContent = 'Loading categories...';
     google.script.run
       .withSuccessHandler(function (o) {
+        pruneChecked(o.tree);
         renderTree(o.tree);
         document.getElementById('meta').textContent =
           'Base year ' + o.baseYear + (o.refreshedAt ? ', data refreshed ' + o.refreshedAt + ' (Berlin)' : '');
-        create.disabled = false;
+        treeReady = true;
+        updateControls(); // never enables Create while a create runs
       })
       .withFailureHandler(function (err) {
         document.getElementById('meta').textContent = '';
@@ -118,9 +135,14 @@
 
   document.getElementById('onlyUsed').onchange = loadTree;
   document.getElementById('create').onclick = function () {
-    var create = document.getElementById('create');
-    create.disabled = true;
+    if (busy) return;
+    busy = true;
+    updateControls();
     setStatus(el('div', 'meta', 'Creating the file...'));
+    var done = function () {
+      busy = false;
+      updateControls();
+    };
     google.script.run
       .withSuccessHandler(function (r) {
         var box = el('div');
@@ -129,9 +151,12 @@
         box.appendChild(document.createTextNode(' | '));
         box.appendChild(link('Download as Excel', r.xlsxUrl));
         setStatus(box);
-        create.disabled = false;
+        done();
       })
-      .withFailureHandler(showError)
+      .withFailureHandler(function (err) {
+        showError(err);
+        done();
+      })
       .createManufacturerFile({
         manufacturer: document.getElementById('manufacturer').value,
         selection: selection(),
