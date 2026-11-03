@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert';
 import crypto from 'node:crypto';
 import { gzipSync, gunzipSync } from 'node:zlib';
-import { makeEnv, INBOX_ID, NEW_FEED_DEFS, NEW_FEED_TABS } from './helpers/gas-fakes.mjs';
+import { makeEnv, INBOX_ID, NEW_FEED_DEFS, NEW_FEED_TABS, PROPERTY_VALUE_MAX_BYTES, PROPERTY_STORE_MAX_BYTES } from './helpers/gas-fakes.mjs';
 import { buildPayload } from '../refresh/lib/inbox.mjs';
 import { loadManifest, sqlColumnsFor } from '../refresh/lib/manifest.mjs';
 import { shapeFeed } from '../refresh/lib/shape.mjs';
@@ -668,9 +668,8 @@ test('sha256Hex_ turns Apps Script\'s signed digest bytes into lower-case hex', 
   assert.strictEqual(e.context.sha256Hex_([]), crypto.createHash('sha256').update(Buffer.alloc(0)).digest('hex'));
 });
 
-// End to end: the exact files Node's buildPayload produces for the real sql/feeds.json feed definitions.
-test('e2e: the real buildPayload output in the Inbox lands all fifteen live tabs', () => {
-  const BASE_YEAR = 2026;
+// Two shaped rows per feed of the real sql/feeds.json definitions at baseYear, as the CLI prepares them for buildPayload.
+function realPrepared(baseYear) {
   const realFeeds = loadManifest().feeds;
   const raw = (feed, col, i) => {
     if (feed.feed === 'components' && col.sql === 'MPN') return ['0402', '1E3'][i];
@@ -684,10 +683,10 @@ test('e2e: the real buildPayload output in the Inbox lands all fifteen live tabs
     }
   };
   const prepared = realFeeds.map((feedDef) => {
-    const cols = sqlColumnsFor(feedDef, BASE_YEAR);
+    const cols = sqlColumnsFor(feedDef, baseYear);
     const typeOf = (j) => (j < feedDef.columns.length ? feedDef.columns[j] : { sql: cols[j], type: 'number' });
     const rawRows = [0, 1].map((i) => [`${feedDef.feed}-${i}`, ...cols.map((_, j) => raw(feedDef, typeOf(j), i))]);
-    return { feedDef, ...shapeFeed(feedDef, BASE_YEAR, rawRows, cols) };
+    return { feedDef, ...shapeFeed(feedDef, baseYear, rawRows, cols) };
   });
   // Feeds registered in TABS but not yet in sql/feeds.json (added by later tasks) are padded with hand-made two-row feeds.
   for (const d of NEW_FEED_DEFS) {
@@ -695,6 +694,13 @@ test('e2e: the real buildPayload output in the Inbox lands all fifteen live tabs
       prepared.push({ feedDef: { feed: d.feed, tab: d.tab }, headers: d.headers, types: d.types, rows: [['x', 1], ['y', null]] });
     }
   }
+  return prepared;
+}
+
+// End to end: the exact files Node's buildPayload produces for the real sql/feeds.json feed definitions.
+test('e2e: the real buildPayload output in the Inbox lands all fifteen live tabs', () => {
+  const BASE_YEAR = 2026;
+  const prepared = realPrepared(BASE_YEAR);
   const feeds = prepared.map((p) => p.feedDef);
   const state = { runId: RUN, startedAt: STARTED, baseYear: BASE_YEAR, health: HEALTH };
   const { manifest, files } = buildPayload(state, prepared, { publishedAt: '2026-10-30T05:40:00.000Z' });
@@ -731,6 +737,38 @@ test('e2e: the real buildPayload output in the Inbox lands all fifteen live tabs
   assert.deepStrictEqual(e.inbox.fileNames(), []);
   assert.strictEqual(e.inbox.files.length, files.length);
   assert.ok(e.inbox.files.every((f) => f.trashed));
+});
+
+// C1: ACTIVE_RUN holds no column lists; each feed's headers and types are a property of their own. The fake property
+// store throws like Apps Script past 9 KB per value or 500 KB in all, so a full run proves the limits hold.
+test('a fifteen-feed run with base year 2036 stays within the Script Property limits', () => {
+  const BASE_YEAR = 2036;
+  const prepared = realPrepared(BASE_YEAR);
+  assert.strictEqual(prepared.length, 15);
+  const state = { runId: RUN, startedAt: STARTED, baseYear: BASE_YEAR, health: HEALTH };
+  const { files } = buildPayload(state, prepared, { publishedAt: '2026-10-30T05:40:00.000Z' });
+  const e = env();
+  drop(e, files);
+  const begin = e.context.handleBegin_;
+  let afterBegin = null;
+  e.context.handleBegin_ = (req) => {
+    const res = begin(req);
+    afterBegin = { ...e.stored };
+    return res;
+  };
+  assert.deepStrictEqual(e.poll(), { status: 'committed', runId: RUN });
+
+  const run = JSON.parse(afterBegin.ACTIVE_RUN);
+  assert.deepStrictEqual(Object.keys(run.feeds[0]).sort(), ['feed', 'rowCount', 'seqs', 'staged', 'tab', 'width']);
+  for (const p of prepared) {
+    const cols = JSON.parse(afterBegin[`ACTIVE_RUN_FEED_${p.feedDef.feed}`]);
+    assert.deepStrictEqual(cols, { headers: p.headers, types: p.types }, p.feedDef.feed);
+    assert.strictEqual(run.feeds.find((f) => f.feed === p.feedDef.feed).width, p.headers.length);
+  }
+  assert.ok(e.propStats.maxValueBytes <= PROPERTY_VALUE_MAX_BYTES, `largest value ${e.propStats.maxValueBytes} bytes`);
+  assert.ok(e.propStats.maxStoreBytes <= PROPERTY_STORE_MAX_BYTES, `store peak ${e.propStats.maxStoreBytes} bytes`);
+  // Cleared with ACTIVE_RUN at commit.
+  assert.deepStrictEqual(Object.keys(e.stored).filter((k) => k.startsWith('ACTIVE_RUN')), []);
 });
 
 // ---- Final review fixes: R56 stalled runs, R57 young manifests, SUPERSEDED wording, late failed manifests ----

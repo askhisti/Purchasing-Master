@@ -50,7 +50,7 @@ function stagedCounts_(run) {
   });
 }
 
-// Removes everything a run left behind: staging tabs, its part and .csv.tmp files, ACTIVE_RUN.
+// Removes everything a run left behind: staging tabs, its part and .csv.tmp files, ACTIVE_RUN and its feed columns.
 function discardRun_(ss, run) {
   clearStagingTabs_(ss);
   deleteRunFiles_(run.date);
@@ -83,10 +83,11 @@ function handleBegin_(req) {
     sourceRefreshedAt: sourceRefreshedAt_(req.health),
     feeds: req.feeds.map(function (f) {
       createStagingTab_(ss, f.tab, f.headers);
-      return { feed: f.feed, tab: f.tab, headers: f.headers, types: f.types, rowCount: f.rowCount, staged: 0, seqs: [] };
+      setActiveRunColumns_(f.feed, f.headers, f.types);
+      return { feed: f.feed, tab: f.tab, width: f.headers.length, rowCount: f.rowCount, staged: 0, seqs: [] };
     }),
   };
-  setActiveRun_(run);
+  setActiveRun_(run); // last, so ACTIVE_RUN never exists without its feed columns
   return { ok: true };
 }
 
@@ -115,11 +116,11 @@ function handleChunk_(req) {
 // Appends rows as chunk seq of feed f of the active run and saves the run. Returns an error message
 // (nothing written) or null. Shared by the chunk action and the Inbox puller.
 function stageRows_(run, f, seq, rows) {
-  var invalid = validateRows_(rows, f.headers.length);
+  var invalid = validateRows_(rows, f.width);
   if (invalid) return f.feed + ' chunk ' + seq + ': ' + invalid;
   if (rows.length) {
     // Position comes from the recorded count, so a retry after a partial write overwrites the same rows.
-    appendStagedRows_(spreadsheet_(), f.tab, 2 + f.staged, rows, columnFormats_(f.types));
+    appendStagedRows_(spreadsheet_(), f.tab, 2 + f.staged, rows, columnFormats_(activeRunColumns_(f.feed).types));
     savePart_(run.date, f.feed, seq, toCsv_(null, rows));
   }
   f.staged += rows.length;
@@ -156,13 +157,13 @@ function commitRun_(req, retryable) {
     }
     if (rejection) throw new Error(rejection);
     run.feeds.forEach(function (f) {
-      assembleSnapshot_(run.date, f.feed, f.headers);
+      assembleSnapshot_(run.date, f.feed, activeRunColumns_(f.feed).headers);
     });
     swapStarted = true;
     swapStagingToLive_(
       ss,
       run.feeds.map(function (f) {
-        return { tab: f.tab, rows: 1 + f.staged, cols: f.headers.length };
+        return { tab: f.tab, rows: 1 + f.staged, cols: f.width };
       })
     );
   } catch (err) {
@@ -238,6 +239,7 @@ function handleFail_(req) {
   var active = !!run && run.runId === runId;
   if (active) discardRun_(ss, run);
   else if (!run) {
+    clearActiveRun_(); // feed columns a begin that threw part-way may have left
     clearStagingTabs_(ss);
     if (isRunId_(runId)) deleteRunFiles_(snapshotDate_(runId));
   }

@@ -451,10 +451,22 @@ export function encodeRows(rows) {
   return zlib.gzipSync(Buffer.from(JSON.stringify(rows), 'utf8')).toString('base64');
 }
 
+// Script Property limits of Apps Script: 9 KB per value, 500 KB per store.
+export const PROPERTY_VALUE_MAX_BYTES = 9216;
+export const PROPERTY_STORE_MAX_BYTES = 500 * 1024;
+
+// Bytes of every key and value in the store except key `skip`.
+function storeBytes(stored, skip) {
+  let n = 0;
+  for (const [k, v] of Object.entries(stored)) if (k !== skip) n += Buffer.byteLength(k, 'utf8') + Buffer.byteLength(v, 'utf8');
+  return n;
+}
+
 export const INBOX_ID = '1PE6IcZqJFHM7ISA4XKNHpifk8oCVyqdV';
 
 export function makeEnv({ props = {}, rootId = '1lP59mBX1dM24emOJlussSvMPbkBiTTUk', inboxId = INBOX_ID } = {}) {
   const stored = { ...props };
+  const propStats = { maxValueBytes: 0, maxStoreBytes: 0 }; // peaks of setProperty, for size tests
   const ss = new FakeSpreadsheet();
   const drive = new FakeDrive(rootId);
   // The Inbox lives inside the root folder (a shared drive in reality).
@@ -473,7 +485,18 @@ export function makeEnv({ props = {}, rootId = '1lP59mBX1dM24emOJlussSvMPbkBiTTU
     PropertiesService: {
       getScriptProperties: () => ({
         getProperty: (k) => (k in stored ? stored[k] : null),
-        setProperty: (k, v) => { stored[k] = String(v); },
+        getKeys: () => Object.keys(stored),
+        setProperty: (k, v) => {
+          // Like Apps Script: one value at most 9 KB, the whole store at most 500 KB (keys + values).
+          const value = String(v);
+          const bytes = Buffer.byteLength(value, 'utf8');
+          if (bytes > PROPERTY_VALUE_MAX_BYTES) throw new Error('Argument too large: value');
+          const total = storeBytes(stored, k) + Buffer.byteLength(k, 'utf8') + bytes;
+          if (total > PROPERTY_STORE_MAX_BYTES) throw new Error('You have exceeded the property storage quota. Please remove some properties and try again.');
+          stored[k] = value;
+          propStats.maxValueBytes = Math.max(propStats.maxValueBytes, bytes);
+          propStats.maxStoreBytes = Math.max(propStats.maxStoreBytes, total);
+        },
         deleteProperty: (k) => { delete stored[k]; },
       }),
     },
@@ -546,5 +569,5 @@ export function makeEnv({ props = {}, rootId = '1lP59mBX1dM24emOJlussSvMPbkBiTTU
     const out = context.doPost({ postData: { contents: JSON.stringify(body) } });
     return JSON.parse(out.getContent());
   };
-  return { context, stored, ss, drive, inbox, created, events, menus, dialogs, lock, lockLog, post, triggers: scriptApp.triggers, trigger: scriptApp.trigger };
+  return { context, stored, propStats, ss, drive, inbox, created, events, menus, dialogs, lock, lockLog, post, triggers: scriptApp.triggers, trigger: scriptApp.trigger };
 }

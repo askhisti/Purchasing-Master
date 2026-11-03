@@ -9,7 +9,9 @@ function setJsonProperty_(key, value) {
   PropertiesService.getScriptProperties().setProperty(key, JSON.stringify(value));
 }
 
-// {runId, date, baseYear, started, sourceRefreshedAt, feeds:[{feed, tab, headers, types, rowCount, staged, seqs}]}
+// {runId, date, baseYear, started, sourceRefreshedAt, feeds:[{feed, tab, width, rowCount, staged, seqs}]}
+// A Script Property value is limited to 9 KB, so each feed's headers and types are kept in a property of their own
+// (activeRunColumns_).
 function getActiveRun_() {
   return getJsonProperty_(MASTERDATA_CONFIG.ACTIVE_RUN_PROPERTY);
 }
@@ -18,8 +20,29 @@ function setActiveRun_(run) {
   setJsonProperty_(MASTERDATA_CONFIG.ACTIVE_RUN_PROPERTY, run);
 }
 
+function activeRunFeedKey_(feed) {
+  return MASTERDATA_CONFIG.ACTIVE_RUN_FEED_PREFIX + feed;
+}
+
+function setActiveRunColumns_(feed, headers, types) {
+  setJsonProperty_(activeRunFeedKey_(feed), { headers: headers, types: types });
+}
+
+// {headers, types} of a feed of the active run (written by begin).
+function activeRunColumns_(feed) {
+  var cols = getJsonProperty_(activeRunFeedKey_(feed));
+  if (!cols) throw new Error(feed + ': columns of the active run are missing');
+  return cols;
+}
+
+// Deletes ACTIVE_RUN, then every ACTIVE_RUN_FEED_* property (also those of an older run with other feeds).
 function clearActiveRun_() {
-  PropertiesService.getScriptProperties().deleteProperty(MASTERDATA_CONFIG.ACTIVE_RUN_PROPERTY);
+  var props = PropertiesService.getScriptProperties();
+  var prefix = MASTERDATA_CONFIG.ACTIVE_RUN_FEED_PREFIX;
+  props.deleteProperty(MASTERDATA_CONFIG.ACTIVE_RUN_PROPERTY);
+  props.getKeys().forEach(function (k) {
+    if (k.indexOf(prefix) === 0) props.deleteProperty(k);
+  });
 }
 
 function getLastRowCounts_() {

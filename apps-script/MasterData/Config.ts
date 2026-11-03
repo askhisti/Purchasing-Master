@@ -2,6 +2,8 @@
 var MASTERDATA_CONFIG = {
   TOKEN_PROPERTY: 'REFRESH_TOKEN',
   ACTIVE_RUN_PROPERTY: 'ACTIVE_RUN',
+  // Headers and types of one feed of the active run: ACTIVE_RUN_FEED_<feed> (kept out of ACTIVE_RUN: 9 KB per value).
+  ACTIVE_RUN_FEED_PREFIX: 'ACTIVE_RUN_FEED_',
   LAST_ROW_COUNTS_PROPERTY: 'LAST_ROW_COUNTS',
   // 03_Master File from Snowflake
   FOLDER_ID: '1lP59mBX1dM24emOJlussSvMPbkBiTTUk',

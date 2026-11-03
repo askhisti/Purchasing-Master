@@ -563,3 +563,39 @@ test('a failed commit keeps an empty default sheet', () => {
   assert.strictEqual(commit(e, RUN).ok, false);
   assert.ok(e.ss.getSheetByName('Sheet1'));
 });
+
+// C1: each feed's headers and types live in ACTIVE_RUN_FEED_<feed>, never in ACTIVE_RUN; every path that clears
+// ACTIVE_RUN (commit, rejected commit, fail, a begin that replaces another run) also deletes them.
+test('feed columns are kept beside ACTIVE_RUN and cleared with it on every path', () => {
+  const e = env();
+  const runKeys = () => Object.keys(e.stored).filter((k) => k.startsWith('ACTIVE_RUN')).sort();
+  const feedKeys = FEED_NAMES.map((f) => `ACTIVE_RUN_FEED_${f}`).sort();
+
+  runProducts(e, RUN, PROD_ROWS);
+  assert.deepStrictEqual(runKeys(), ['ACTIVE_RUN', ...feedKeys].sort());
+  const run = JSON.parse(e.stored.ACTIVE_RUN);
+  assert.deepStrictEqual(run.feeds[4], { feed: 'products', tab: 'Products', width: 3, rowCount: 1, staged: 1, seqs: [1] });
+  assert.deepStrictEqual(JSON.parse(e.stored.ACTIVE_RUN_FEED_products), { headers: PROD.headers, types: PROD.types });
+  assert.strictEqual(commit(e, RUN).ok, true);
+  assert.deepStrictEqual(runKeys(), [], 'commit');
+
+  begin(e, RUN, { products: 2 });
+  assert.strictEqual(commit(e, RUN).ok, false);
+  assert.deepStrictEqual(runKeys(), [], 'rejected commit');
+
+  begin(e, RUN, {});
+  assert.deepStrictEqual(e.call({ action: 'fail', runId: RUN, reason: 'x' }), { ok: true });
+  assert.deepStrictEqual(runKeys(), [], 'fail of the active run');
+
+  // A begin that threw part-way left columns without ACTIVE_RUN: a fail with no active run sweeps them.
+  e.stored.ACTIVE_RUN_FEED_old_feed = '{"headers":["A"],"types":["string"]}';
+  assert.deepStrictEqual(e.call({ action: 'fail', runId: RUN2, reason: 'x' }), { ok: true });
+  assert.deepStrictEqual(runKeys(), [], 'fail with no active run');
+
+  // A begin replacing another run leaves only the new run's columns.
+  begin(e, RUN, {});
+  e.stored.ACTIVE_RUN_FEED_old_feed = '{"headers":["A"],"types":["string"]}';
+  begin(e, RUN2, {});
+  assert.deepStrictEqual(runKeys(), ['ACTIVE_RUN', ...feedKeys].sort(), 'begin of another run');
+  assert.strictEqual(JSON.parse(e.stored.ACTIVE_RUN).runId, RUN2);
+});
