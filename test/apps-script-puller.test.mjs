@@ -284,6 +284,88 @@ test('wide feeds stage in cell-sized slices', () => {
   assert.deepStrictEqual(stagedSliceSizes(25, 9000), [4000, 4000, 1000]);
 });
 
+
+test('a sha256 mismatch fails the run: FAILED, live tabs untouched, Inbox files trashed', () => {
+  const e = env();
+  const live = e.ss.seed('Components', [COMP.headers, ['OLD', 'old', 1, true, 1]]);
+  const { files } = payload(RUN);
+  const name = `${RUN}__components.json.gz`;
+  drop(e, files, { skip: [name] });
+  e.inbox.addFile(name, gzipSync(Buffer.from(JSON.stringify([['TAMPERED', 'x', 1, true, 1]]), 'utf8')), { created: new Date(NOW - HOUR) });
+
+  const res = e.poll();
+  assert.strictEqual(res.status, 'failed');
+  assert.match(res.error, /components\.json\.gz: sha256 does not match the manifest/);
+  assert.deepStrictEqual(live.data(), [COMP.headers, ['OLD', 'old', 1, true, 1]]);
+  assert.deepStrictEqual(stagingTabs(e), []);
+  const rows = entries(e);
+  assert.strictEqual(rows.length, 1);
+  assert.deepStrictEqual([rows[0][0], rows[0][1], rows[0][6]], [RUN, berlin(STARTED), 'FAILED']);
+  assert.match(rows[0][7], /sha256 does not match/);
+  assert.strictEqual(e.stored.LAST_PROCESSED_RUN, RUN);
+  assert.strictEqual(e.stored.ACTIVE_RUN, undefined);
+  assert.deepStrictEqual(e.inbox.fileNames(), []);
+  assert.deepStrictEqual(e.poll(), { status: 'idle' }, 'the failed run is not retried');
+});
+
+test('R46: of several same-name copies, the data file whose sha256 matches the manifest is used', () => {
+  const e = env();
+  const { files } = payload(RUN);
+  const name = `${RUN}__components.json.gz`;
+  // A bad copy first, then the real files (including a second, identical manifest copy).
+  e.inbox.addFile(name, gzipSync(Buffer.from('[]', 'utf8')), { created: new Date(NOW - 2 * HOUR) });
+  drop(e, files);
+  drop(e, files.filter((f) => f.name.endsWith('__manifest.json')));
+  assert.deepStrictEqual(e.poll(), { status: 'committed', runId: RUN });
+  assert.deepStrictEqual(e.ss.getSheetByName('Components').data(), [COMP.headers, ...sheetRows(COMP_ROWS)]);
+  assert.deepStrictEqual(e.inbox.fileNames(), []);
+});
+
+test('a failed manifest logs one FAILED row with its reason and trashes the run\'s files (also data files)', () => {
+  const e = env();
+  const ready = payload(RUN);
+  // Data files uploaded before the failure, then the failed manifest (health and baseYear null).
+  drop(e, ready.files.filter((f) => !f.name.endsWith('__manifest.json')));
+  const failed = payload(RUN, {}, { status: 'failed', reason: 'upload failed: HTTP 500', state: { health: null, baseYear: null } });
+  assert.strictEqual(failed.manifest.health, null);
+  drop(e, failed.files);
+
+  assert.deepStrictEqual(e.poll(), { status: 'failed', runId: RUN, error: 'upload failed: HTTP 500' });
+  const rows = entries(e);
+  assert.strictEqual(rows.length, 1);
+  assert.deepStrictEqual([rows[0][0], rows[0][1], rows[0][3], rows[0][4], rows[0][5], rows[0][6], rows[0][7]],
+    [RUN, berlin(STARTED), '', '', '', 'FAILED', 'upload failed: HTTP 500']);
+  assert.deepStrictEqual(TABS.filter((t) => e.ss.getSheetByName(t)), []);
+  assert.strictEqual(e.stored.LAST_PROCESSED_RUN, RUN);
+  assert.deepStrictEqual(e.inbox.fileNames(), []);
+  assert.deepStrictEqual(e.poll(), { status: 'idle' });
+  assert.strictEqual(entries(e).length, 1);
+});
+
+test('R46: when a runId has both a ready and a failed manifest, the failed one wins', () => {
+  const e = env();
+  drop(e, payload(RUN).files);
+  drop(e, payload(RUN, {}, { status: 'failed', reason: 'late failure' }).files);
+  const res = e.poll();
+  assert.deepStrictEqual(res, { status: 'failed', runId: RUN, error: 'late failure' });
+  assert.deepStrictEqual(TABS.filter((t) => e.ss.getSheetByName(t)), []);
+  assert.deepStrictEqual(entries(e).map((r) => r[6]), ['FAILED']);
+  assert.deepStrictEqual(e.inbox.fileNames(), []);
+});
+
+test('a manifest whose data file is missing fails the run before anything is staged', () => {
+  const e = env();
+  const { files } = payload(RUN);
+  drop(e, files, { skip: [`${RUN}__mecl_price.json.gz`] });
+  const res = e.poll();
+  assert.strictEqual(res.status, 'failed');
+  assert.match(res.error, /mecl_price\.json\.gz: missing from the Inbox/);
+  assert.ok(!e.ss.calls.some((c) => c.sheet && c.sheet.startsWith('__staging_')), 'no staging tab was written');
+  assert.deepStrictEqual(entries(e).map((r) => [r[0], r[6]]), [[RUN, 'FAILED']]);
+  assert.strictEqual(e.stored.LAST_PROCESSED_RUN, RUN);
+  assert.deepStrictEqual(e.inbox.fileNames(), []);
+});
+
 test('a data file whose row count differs from the manifest fails the run', () => {
   const e = env();
   const { manifest, files } = payload(RUN);
