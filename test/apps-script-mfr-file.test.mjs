@@ -144,6 +144,49 @@ test('a protection adds the file owner first, then switches off domain edit', ()
   }
 });
 
+// Correction: Protection.addEditor takes an email string (or a Base.User), never the DriveApp User of getOwner().
+test('the owner is added to a protection by email string', () => {
+  const e = setup();
+  e.context.createManufacturerFile(form());
+  const protection = e.created[0].getSheetByName('Our parts').protections[0];
+  assert.throws(() => protection.addEditor({ getEmail: () => FAKE_OWNER }), /don't match the method signature/);
+  assert.strictEqual(protection.calls[0], `addEditor:${FAKE_OWNER}`);
+});
+
+test('without a Drive owner no editor is added and the others are still removed', () => {
+  const e = setup();
+  e.protection.owner = null;
+  e.protection.editors = ['editor@example.com', 'other@example.com'];
+  e.context.createManufacturerFile(form());
+  for (const name of SHEETS) {
+    const p = e.created[0].getSheetByName(name).protections[0];
+    assert.deepStrictEqual(plain(p.calls), ['removeEditor:editor@example.com', 'removeEditor:other@example.com', 'setDomainEdit:false'], name);
+    assert.deepStrictEqual(p.getEditors(), [], name);
+  }
+});
+
+test('a failure while the sheets are written trashes the new file and rethrows the original error', () => {
+  const e = setup();
+  const real = e.context.mfrWriteRows_;
+  e.context.mfrWriteRows_ = (sheet, ...rest) => {
+    if (sheet.getName() === 'Your alternatives') throw new Error('write failed');
+    return real(sheet, ...rest);
+  };
+  assert.throws(() => e.context.createManufacturerFile(form()), /^Error: write failed$/);
+  assert.strictEqual(e.created.length, 1);
+  assert.strictEqual(e.drive.filesById['created-1'].isTrashed(), true);
+  assert.deepStrictEqual(plain(e.events).slice(-1), ['trash']);
+  assert.deepStrictEqual(e.drive.root.folder('Manufacturer files').fileNames(), []);
+});
+
+test('a failure in a protection also trashes the new file', () => {
+  const e = setup();
+  e.protection.editors = [FAKE_OWNER];
+  e.context.mfrLock_ = () => { throw new Error('protect failed'); };
+  assert.throws(() => e.context.createManufacturerFile(form()), /^Error: protect failed$/);
+  assert.strictEqual(e.drive.filesById['created-1'].isTrashed(), true);
+});
+
 test('a protection removes every editor but the owner; one it cannot remove is logged, not fatal', () => {
   const e = setup();
   e.protection.editors = [FAKE_OWNER, 'editor@example.com', FAKE_UNREMOVABLE_EDITOR];

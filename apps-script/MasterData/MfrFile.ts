@@ -101,11 +101,12 @@ function mfrReadMeLines_(manufacturer, selection, baseYear, refreshedAt, now) {
 // A new protection mirrors the spreadsheet's permissions until its editor list is changed: the file owner is added
 // explicitly first (so the list is set), then every other editor is removed and domain edit is switched off.
 // An editor that cannot be removed (e.g. the current user) is counted and logged, not fatal.
-function mfrLock_(protection, owner) {
-  protection.addEditor(owner);
+// ownerEmail is null when Drive reports no owner: then no editor is added, the others are still removed.
+function mfrLock_(protection, ownerEmail) {
+  if (ownerEmail) protection.addEditor(ownerEmail); // Protection.addEditor takes an email or a Base.User, not a Drive User
   var failed = 0;
   protection.getEditors().forEach(function (u) {
-    if (u.getEmail() === owner.getEmail()) return;
+    if (ownerEmail && u.getEmail() === ownerEmail) return;
     try { protection.removeEditor(u); } catch (e) { failed++; }
   });
   if (failed) console.warn('mfrLock_: ' + failed + ' editor(s) could not be removed from "' + protection.getDescription() + '"');
@@ -144,11 +145,47 @@ function createManufacturerFile(form) {
 
   var now = new Date();
   var name = manufacturer + ' - component overview - ' + Utilities.formatDate(now, cfg.TIME_ZONE, 'yyyy-MM-dd');
+  var lines = mfrReadMeLines_(manufacturer, selection, baseYear, mfrRefreshedAt_(ss), now);
   var folder = mfrFolder_(); // before the file exists, so a Drive problem here leaves nothing behind
   var file = SpreadsheetApp.create(name);
-  var driveFile = DriveApp.getFileById(file.getId());
-  var owner = driveFile.getOwner();
+  // From here on any failure trashes the new file before the error is rethrown.
+  try {
+    var driveFile = DriveApp.getFileById(file.getId());
+    var owner = driveFile.getOwner();
+    mfrWriteSheets_(file, built, lines, baseYear, owner ? owner.getEmail() : null);
+  } catch (e) {
+    mfrTrashQuietly_(file);
+    throw e;
+  }
 
+  // Protections are made while the file is still in the creator's My Drive; moving it afterwards.
+  try {
+    driveFile.moveTo(folder);
+  } catch (e) {
+    mfrTrashQuietly_(file);
+    throw new Error('Could not save the file in the Manufacturer files folder: ' + errorMessage_(e));
+  }
+
+  return {
+    url: file.getUrl(),
+    xlsxUrl: 'https://docs.google.com/spreadsheets/d/' + file.getId() + '/export?format=xlsx',
+    name: name,
+    rowCount: built.rows.length,
+  };
+}
+
+// Trashes a half-made manufacturer file; a trash error is ignored (the original error is the one reported).
+function mfrTrashQuietly_(file) {
+  try {
+    DriveApp.getFileById(file.getId()).setTrashed(true);
+  } catch (trashErr) {
+    console.warn('createManufacturerFile: cannot trash ' + file.getId() + ': ' + errorMessage_(trashErr));
+  }
+}
+
+// Writes and protects the four sheets of a new manufacturer file.
+function mfrWriteSheets_(file, built, lines, baseYear, ownerEmail) {
+  var cfg = MASTERDATA_CONFIG;
   var readMe = file.getSheets()[0].setName('Read me');
   var ours = file.insertSheet('Our parts', 1);
   var alts = file.insertSheet('Your alternatives', 2);
@@ -156,12 +193,11 @@ function createManufacturerFile(form) {
   var n = built.parts.length;
 
   // Read me
-  var lines = mfrReadMeLines_(manufacturer, selection, baseYear, mfrRefreshedAt_(ss), now);
   readMe.setColumnWidth(1, 900);
   readMe.getRange(1, 1).setNumberFormat('@');
   readMe.getRange(1, 1, lines.length, 1).setValues(lines.map(function (l) { return [l[0]]; }));
   lines.forEach(function (l, i) { if (l[1]) readMe.getRange(i + 1, 1).setFontWeight('bold'); });
-  mfrLock_(readMe.protect().setDescription('Read-only'), owner);
+  mfrLock_(readMe.protect().setDescription('Read-only'), ownerEmail);
 
   // Our parts: Category .. Volume Type are text; the volume and month columns that follow are numbers.
   var width = built.headers.length;
@@ -172,7 +208,7 @@ function createManufacturerFile(form) {
   ours.getRange(2, textCols + 1, built.rows.length, width - textCols).setNumberFormat('General');
   mfrWriteRows_(ours, 2, built.rows, width);
   ours.setFrozenRows(1);
-  mfrLock_(ours.protect().setDescription('Read-only'), owner);
+  mfrLock_(ours.protect().setDescription('Read-only'), ownerEmail);
 
   // Your alternatives
   var altHeaders = ['ME_EC', 'Manufacturer', 'MPN', 'Description', 'Your Alternative MPN',
@@ -188,7 +224,7 @@ function createManufacturerFile(form) {
     SpreadsheetApp.newDataValidation().requireValueInList(['Yes', 'No'], true).setAllowInvalid(false).build());
   alts.setFrozenRows(1);
   mfrLock_(alts.protect().setDescription('Fill in columns E to I only')
-    .setUnprotectedRanges([alts.getRange(2, 5, n, 5)]), owner);
+    .setUnprotectedRanges([alts.getRange(2, 5, n, 5)]), ownerEmail);
 
   // Your pricing
   var priceHeaders = ['ME_EC', 'Manufacturer', 'MPN', 'Quoted MPN', 'Currency', 'MOQ', 'Lead Time (weeks)'];
@@ -214,20 +250,5 @@ function createManufacturerFile(form) {
   price.getRange(2, 1, n, 3).setBackground(MFR_GREY_);
   price.setFrozenRows(1);
   mfrLock_(price.protect().setDescription('Fill in columns D onward only')
-    .setUnprotectedRanges([price.getRange(2, 4, n, pw - 3), price.getRange(n + 2, 1, extra, pw)]), owner);
-
-  // Protections are made while the file is still in the creator's My Drive; moving it afterwards.
-  try {
-    driveFile.moveTo(folder);
-  } catch (e) {
-    try { driveFile.setTrashed(true); } catch (trashErr) { /* the move error is the one reported */ }
-    throw new Error('Could not save the file in the Manufacturer files folder: ' + errorMessage_(e));
-  }
-
-  return {
-    url: file.getUrl(),
-    xlsxUrl: 'https://docs.google.com/spreadsheets/d/' + file.getId() + '/export?format=xlsx',
-    name: name,
-    rowCount: built.rows.length,
-  };
+    .setUnprotectedRanges([price.getRange(2, 4, n, pw - 3), price.getRange(n + 2, 1, extra, pw)]), ownerEmail);
 }

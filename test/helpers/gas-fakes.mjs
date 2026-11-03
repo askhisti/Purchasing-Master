@@ -126,8 +126,10 @@ class FakeSheet {
     const p = {
       description: '', unprotected: [], editors: (this.ss.protectionEditors || [FAKE_OWNER]).map(user), domainEdit: true, calls: [],
       getEditors() { return [...this.editors]; },
+      // Only the email overload is used: Apps Script rejects a DriveApp User here (it takes a string or Base.User).
       addEditor(u) {
-        const email = typeof u === 'string' ? u : u.getEmail();
+        if (typeof u !== 'string') throw new Error("The parameters (DriveApp.User) don't match the method signature for SpreadsheetApp.Protection.addEditor.");
+        const email = u;
         this.calls.push('addEditor:' + email);
         if (!this.editors.some((x) => x.getEmail() === email)) this.editors.push(user(email));
         return this;
@@ -495,8 +497,9 @@ export function makeEnv({ props = {}, rootId = '1lP59mBX1dM24emOJlussSvMPbkBiTTU
   const lock = { busy: false };
   const scriptApp = makeScriptApp();
   const events = []; // protect/move/trash order of created spreadsheets
-  // Editors a new protection of a created spreadsheet starts with (a fresh My Drive file: its owner only).
-  const protection = { editors: null };
+  // Editors a new protection of a created spreadsheet starts with (null: a fresh My Drive file, its owner only), and
+  // the owner Drive reports for a created file (null: none).
+  const protection = { editors: null, owner: FAKE_OWNER };
   const created = []; // spreadsheets made by SpreadsheetApp.create
   const menus = []; // menus added by getUi().createMenu().addToUi()
   const dialogs = []; // getUi().showModalDialog calls
@@ -545,7 +548,7 @@ export function makeEnv({ props = {}, rootId = '1lP59mBX1dM24emOJlussSvMPbkBiTTU
         const file = new FakeFile(null, name, '', 'application/vnd.google-apps.spreadsheet');
         file.events = events;
         file.drive = drive;
-        file.owner = FAKE_OWNER;
+        file.owner = protection.owner;
         drive.filesById[c.id] = file;
         created.push(c);
         return c;
