@@ -675,7 +675,7 @@ test('e2e: the real buildPayload output in the Inbox lands all fifteen live tabs
   const raw = (feed, col, i) => {
     if (feed.feed === 'components' && col.sql === 'MPN') return ['0402', '1E3'][i];
     if (col.sql === 'ME_EC') return `ME_EC_000000${i + 1}`;
-    if (i === 1 && col.type !== 'string') return null; // empty cells become null in the shaped rows
+    if (i === 1 && col.type !== 'string' && col !== feed.columns[0]) return null; // empty cells become null in the shaped rows (never the whole row: BOM_Coverage has only number columns)
     switch (col.type) {
       case 'number': return String((i + 1) * 1.5);
       case 'boolean': return 'true';

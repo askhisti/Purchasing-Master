@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadManifest, headersFor, sqlColumnsFor, demandYearsFor, demandMonthsFor } from '../refresh/lib/manifest.mjs';
+import vm from 'node:vm';
 import { renderFeedSql } from '../refresh/lib/sql.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -26,6 +27,11 @@ const MONTHLY = {
 const PRICE = {
   price_at_demand: ['Price_At_Demand', ['ME_EC', 'MPN', 'Manufacturer', 'Year', 'EMS', 'EMS Demand', 'Total Demand', 'EMS Price EUR', 'EMS Price Stage', 'LOA Price EUR', 'LOA Price Stage', 'Target Price EUR', 'Best Binding Price EUR', 'Best Binding Price Type', 'Expected Spend EUR', 'Target Spend EUR', 'Gap To Target EUR', 'Is Priced', 'Is Below Lowest Stage', 'Source Refreshed At']],
   savings_levers: ['Savings_Levers', ['ME_EC', 'MPN', 'Manufacturer', 'Year', 'EMS', 'Spend Rank In Year', 'Cumulative Spend Share %', 'Expected Spend EUR', 'Component Spend In Year EUR', 'LOA Pass-Through Risk EUR', 'No LOA Spend EUR', 'EMS Harmonisation Saving EUR', 'Lowest EMS', 'Lowest EMS Price EUR', 'Alternative Saving EUR', 'Best Alternative MPN', 'Best Alternative Price EUR', 'Stale Price Spend EUR', 'Below Lowest Stage Spend EUR', 'Gap To Target EUR', 'Is Quote Expired', 'Is Carried Forward', 'Price Valid Until', 'Has LOA Price', 'Has Target Price', 'Source Refreshed At']],
+};
+const HEALTH = {
+  quote_health: ['Quote_Health', ['ME_EC', 'MPN', 'Manufacturer', 'HW Category', 'Next Demand Year', 'Demand Next 12 Months', 'Valid LOA Quotes', 'Expired LOA Quotes', 'LOA Valid Until', 'Valid EMS Quotes', 'Expired EMS Quotes', 'EMS Valid Until', 'Last Quoted On', 'Stale Price Spend EUR', 'Status'], 500],
+  multisource_health: ['Multisource_Health', ['ME_EC', 'MPN', 'Manufacturer', 'HW Category', 'Sourcing Level', 'True Single Source Placements', 'Single Source Reasons', 'Usable Alternates', 'ME_MS', 'Cluster Sourcing Health', 'Products Using', 'Demand Current Year'], 500],
+  bom_coverage: ['BOM_Coverage', ['Year', 'Planned Units', 'Released BOM Units', 'Released BOM Share %'], 100],
 };
 const months = Array.from({ length: 144 }, (_, k) => `${2025 + Math.floor(k / 12)}-${String(k % 12 + 1).padStart(2, '0')}`);
 
@@ -73,8 +79,8 @@ function finalSelect(sql) {
 const manifest = loadManifest();
 
 test('manifest lists the feeds in order with spec tab names', () => {
-  assert.deepEqual(manifest.feeds.map((f) => f.feed), [...Object.keys(SPEC), ...Object.keys(MONTHLY), 'bom_sources', ...Object.keys(PRICE)]);
-  for (const f of manifest.feeds) assert.equal(f.tab, f.feed === 'bom_sources' ? 'BOM_Sources' : (SPEC[f.feed] || MONTHLY[f.feed] || PRICE[f.feed])[0]);
+  assert.deepEqual(manifest.feeds.map((f) => f.feed), [...Object.keys(SPEC), ...Object.keys(MONTHLY), 'bom_sources', ...Object.keys(PRICE), ...Object.keys(HEALTH)]);
+  for (const f of manifest.feeds) assert.equal(f.tab, f.feed === 'bom_sources' ? 'BOM_Sources' : (SPEC[f.feed] || MONTHLY[f.feed] || PRICE[f.feed] || HEALTH[f.feed])[0]);
 });
 
 test('monthly feeds: headers, years and 144 month columns', () => {
@@ -109,6 +115,30 @@ test('price feeds: headers exactly as spec section 5, pageLimit 500, no year or 
   assert.equal(types('savings_levers')['Price Valid Until'], 'date');
   assert.equal(types('savings_levers')['Is Quote Expired'], 'boolean');
   assert.equal(types('price_at_demand')['Year'], 'number');
+});
+
+test('health feeds: headers, types, page limits; tabs equal MASTERDATA_CONFIG.TABS', () => {
+  const types = (n) => Object.fromEntries(manifest.feeds.find((x) => x.feed === n).columns.map((c) => [c.header, c.type]));
+  for (const [name, [tab, headers, limit]] of Object.entries(HEALTH)) {
+    const f = manifest.feeds.find((x) => x.feed === name);
+    assert.ok(f, name + ' in manifest');
+    assert.equal(f.tab, tab);
+    assert.equal(f.pageLimit, limit);
+    assert.ok(!f.demandYears && !f.demandMonths, name + ' has no demand expansion');
+    assert.deepEqual(headersFor(f, 2026), headers);
+  }
+  const q = types('quote_health');
+  for (const h of ['Next Demand Year', 'Demand Next 12 Months', 'Valid LOA Quotes', 'Expired LOA Quotes', 'Valid EMS Quotes', 'Expired EMS Quotes', 'Stale Price Spend EUR']) assert.equal(q[h], 'number', h);
+  for (const h of ['LOA Valid Until', 'EMS Valid Until', 'Last Quoted On']) assert.equal(q[h], 'date', h);
+  assert.equal(q.Status, 'string');
+  const m = types('multisource_health');
+  for (const h of ['True Single Source Placements', 'Products Using', 'Demand Current Year']) assert.equal(m[h], 'number', h);
+  assert.equal(m.ME_MS, 'string');
+  for (const t of Object.values(types('bom_coverage'))) assert.equal(t, 'number');
+  const context = {};
+  vm.createContext(context);
+  vm.runInContext(fs.readFileSync(path.join(root, 'apps-script/MasterData/Config.ts'), 'utf8'), context);
+  assert.deepEqual([...vm.runInContext('MASTERDATA_CONFIG.TABS', context)], manifest.feeds.map((f) => f.tab));
 });
 
 test('bom_sources: 14 headers then Volume 2025..2036, tab BOM_Sources, pageLimit 300', () => {
@@ -190,8 +220,8 @@ test('health.sql returns BASE_YEAR, PROBLEM_COUNT, PROBLEM_LIST', () => {
   assert.ok(!/\{\{/.test(sql));
 });
 
-test('paging: every feed starts at pageLimit 500 (200 for monthly feeds, 300 for bom_sources); targetPageChars is 250000', () => {
-  for (const f of manifest.feeds) assert.equal(f.pageLimit, f.feed === 'bom_sources' ? 300 : MONTHLY[f.feed] ? 200 : 500, f.feed);
+test('paging: every feed starts at pageLimit 500 (200 for monthly feeds, 300 for bom_sources, 100 for bom_coverage); targetPageChars is 250000', () => {
+  for (const f of manifest.feeds) assert.equal(f.pageLimit, f.feed === 'bom_sources' ? 300 : MONTHLY[f.feed] ? 200 : f.feed === 'bom_coverage' ? 100 : 500, f.feed);
   assert.equal(manifest.targetPageChars, 250000);
 });
 

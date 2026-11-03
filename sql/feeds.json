@@ -883,6 +883,185 @@
           "type": "string"
         }
       ]
+    },
+    {
+      "feed": "quote_health",
+      "tab": "Quote_Health",
+      "sqlFile": "sql/feeds/quote_health.sql",
+      "pageLimit": 500,
+      "columns": [
+        {
+          "sql": "ME_EC",
+          "header": "ME_EC",
+          "type": "string"
+        },
+        {
+          "sql": "MPN",
+          "header": "MPN",
+          "type": "string"
+        },
+        {
+          "sql": "MANUFACTURER",
+          "header": "Manufacturer",
+          "type": "string"
+        },
+        {
+          "sql": "HW_CATEGORY",
+          "header": "HW Category",
+          "type": "string"
+        },
+        {
+          "sql": "NEXT_DEMAND_YEAR",
+          "header": "Next Demand Year",
+          "type": "number"
+        },
+        {
+          "sql": "DEMAND_NEXT_12_MONTHS",
+          "header": "Demand Next 12 Months",
+          "type": "number"
+        },
+        {
+          "sql": "VALID_LOA_QUOTES",
+          "header": "Valid LOA Quotes",
+          "type": "number"
+        },
+        {
+          "sql": "EXPIRED_LOA_QUOTES",
+          "header": "Expired LOA Quotes",
+          "type": "number"
+        },
+        {
+          "sql": "LOA_VALID_UNTIL",
+          "header": "LOA Valid Until",
+          "type": "date"
+        },
+        {
+          "sql": "VALID_EMS_QUOTES",
+          "header": "Valid EMS Quotes",
+          "type": "number"
+        },
+        {
+          "sql": "EXPIRED_EMS_QUOTES",
+          "header": "Expired EMS Quotes",
+          "type": "number"
+        },
+        {
+          "sql": "EMS_VALID_UNTIL",
+          "header": "EMS Valid Until",
+          "type": "date"
+        },
+        {
+          "sql": "LAST_QUOTED_ON",
+          "header": "Last Quoted On",
+          "type": "date"
+        },
+        {
+          "sql": "STALE_PRICE_SPEND_EUR",
+          "header": "Stale Price Spend EUR",
+          "type": "number"
+        },
+        {
+          "sql": "STATUS",
+          "header": "Status",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "feed": "multisource_health",
+      "tab": "Multisource_Health",
+      "sqlFile": "sql/feeds/multisource_health.sql",
+      "pageLimit": 500,
+      "columns": [
+        {
+          "sql": "ME_EC",
+          "header": "ME_EC",
+          "type": "string"
+        },
+        {
+          "sql": "MPN",
+          "header": "MPN",
+          "type": "string"
+        },
+        {
+          "sql": "MANUFACTURER",
+          "header": "Manufacturer",
+          "type": "string"
+        },
+        {
+          "sql": "HW_CATEGORY",
+          "header": "HW Category",
+          "type": "string"
+        },
+        {
+          "sql": "SOURCING_LEVEL",
+          "header": "Sourcing Level",
+          "type": "string"
+        },
+        {
+          "sql": "TRUE_SINGLE_SOURCE_PLACEMENTS",
+          "header": "True Single Source Placements",
+          "type": "number"
+        },
+        {
+          "sql": "SINGLE_SOURCE_REASONS",
+          "header": "Single Source Reasons",
+          "type": "string"
+        },
+        {
+          "sql": "USABLE_ALTERNATES",
+          "header": "Usable Alternates",
+          "type": "string"
+        },
+        {
+          "sql": "ME_MS",
+          "header": "ME_MS",
+          "type": "string"
+        },
+        {
+          "sql": "CLUSTER_SOURCING_HEALTH",
+          "header": "Cluster Sourcing Health",
+          "type": "string"
+        },
+        {
+          "sql": "PRODUCTS_USING",
+          "header": "Products Using",
+          "type": "number"
+        },
+        {
+          "sql": "DEMAND_CURRENT_YEAR",
+          "header": "Demand Current Year",
+          "type": "number"
+        }
+      ]
+    },
+    {
+      "feed": "bom_coverage",
+      "tab": "BOM_Coverage",
+      "sqlFile": "sql/feeds/bom_coverage.sql",
+      "pageLimit": 100,
+      "columns": [
+        {
+          "sql": "YEAR",
+          "header": "Year",
+          "type": "number"
+        },
+        {
+          "sql": "PLANNED_UNITS",
+          "header": "Planned Units",
+          "type": "number"
+        },
+        {
+          "sql": "RELEASED_BOM_UNITS",
+          "header": "Released BOM Units",
+          "type": "number"
+        },
+        {
+          "sql": "RELEASED_BOM_SHARE_PCT",
+          "header": "Released BOM Share %",
+          "type": "number"
+        }
+      ]
     }
   ]
 }
