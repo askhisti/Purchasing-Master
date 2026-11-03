@@ -36,20 +36,30 @@ test('renderFeedSql throws on a non-integer year', () => {
 test('buildCountSql wraps the feed in a count query', () => {
   assert.equal(
     buildCountSql(FEED),
-    `SELECT COUNT(*) AS ROW_COUNT, COUNT(DISTINCT ROW_KEY) AS KEY_COUNT FROM (${FEED})`,
+    `SELECT COUNT(*) AS ROW_COUNT, COUNT(DISTINCT ROW_KEY) AS KEY_COUNT FROM (${FEED}\n)`,
   );
+});
+
+test('a trailing -- comment in the feed SQL cannot swallow the closing parenthesis', () => {
+  const feed = 'SELECT ROW_KEY FROM t -- last line is a comment';
+  for (const sql of [buildCountSql(feed), buildPageSql(feed, null, 5), buildPageSql(feed, 'K', 5)]) {
+    const lines = sql.split('\n');
+    assert.equal(lines.length, 2, sql);
+    assert.ok(lines[0].endsWith('-- last line is a comment'));
+    assert.match(lines[1], /^\)/, 'the closing parenthesis starts the line after the comment');
+  }
 });
 
 test('buildPageSql escapes a single quote in afterKey by doubling it', () => {
   const sql = buildPageSql(FEED, "A'B", 10);
   assert.ok(sql.includes("ROW_KEY > 'A''B'"));
-  assert.equal(sql, `SELECT * FROM (${FEED}) WHERE ROW_KEY > 'A''B' ORDER BY ROW_KEY LIMIT 10`);
+  assert.equal(sql, `SELECT * FROM (${FEED}\n) WHERE ROW_KEY > 'A''B' ORDER BY ROW_KEY LIMIT 10`);
 });
 
 test('buildPageSql with afterKey null has no WHERE', () => {
   const sql = buildPageSql(FEED, null, 500);
   assert.ok(!/\bWHERE\b/.test(sql));
-  assert.equal(sql, `SELECT * FROM (${FEED}) ORDER BY ROW_KEY LIMIT 500`);
+  assert.equal(sql, `SELECT * FROM (${FEED}\n) ORDER BY ROW_KEY LIMIT 500`);
 });
 
 test('buildPageSql escapes a backslash in afterKey', () => {

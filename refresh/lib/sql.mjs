@@ -40,8 +40,9 @@ export function renderFeedSql(sqlText, baseYear, demandYears = [], demandMonths 
 }
 
 // One row for total rows and distinct ROW_KEY values of the feed.
+// The closing parenthesis of every wrapper starts a new line, so a trailing `--` comment in the feed SQL cannot swallow it.
 export function buildCountSql(feedSql) {
-  return `SELECT COUNT(*) AS ROW_COUNT, COUNT(DISTINCT ROW_KEY) AS KEY_COUNT FROM (${feedSql})`;
+  return `SELECT COUNT(*) AS ROW_COUNT, COUNT(DISTINCT ROW_KEY) AS KEY_COUNT FROM (${feedSql}\n)`;
 }
 
 // One keyset page of the feed, ordered by ROW_KEY, resuming after afterKey.
@@ -49,7 +50,7 @@ export function buildCountSql(feedSql) {
 export function buildPageSql(feedSql, afterKey, limit) {
   if (!Number.isInteger(limit) || limit <= 0) throw new Error(`limit must be a positive integer, got ${limit}`);
   const where = afterKey === null || afterKey === undefined ? '' : ` WHERE ROW_KEY > ${quoteLiteral(afterKey)}`;
-  return `SELECT * FROM (${feedSql})${where} ORDER BY ROW_KEY LIMIT ${limit}`;
+  return `SELECT * FROM (${feedSql}\n)${where} ORDER BY ROW_KEY LIMIT ${limit}`;
 }
 
 // Size the next page so it should return about `target` characters.
