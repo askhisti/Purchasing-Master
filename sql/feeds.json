@@ -660,7 +660,7 @@
           "type": "string"
         },
         {
-          "sql": "YEAR",
+          "sql": "DEMAND_YEAR",
           "header": "Year",
           "type": "number"
         },
@@ -768,7 +768,7 @@
           "type": "string"
         },
         {
-          "sql": "YEAR",
+          "sql": "DEMAND_YEAR",
           "header": "Year",
           "type": "number"
         },
