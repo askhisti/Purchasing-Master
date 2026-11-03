@@ -61,14 +61,14 @@ Any failure leaves last night's tabs in place and is recorded in `_Refresh_Log`.
 
 ## 6. MasterData tabs (phase 1)
 
-Contract rules: headers in row 1, data from row 2, one row per key, blanks are empty cells (not `-`), numbers are numbers, dates are `YYYY-MM-DD`. Columns are only ever appended; renaming or removing one is a breaking change. Y = current year at run time; demand columns are Y … Y+10.
+Contract rules: headers in row 1, data from row 2, one row per key, blanks are empty cells (not `-`), numbers are numbers, dates are `YYYY-MM-DD`. Columns are only ever appended; renaming or removing one is a breaking change. Y = current year at run time; demand columns run from 2025 (the first year with demand in Snowflake) to Y+10, so each January appends one column and none is removed (changed 2026-11-02 from Y … Y+10).
 
 | Tab | One row per | Source | Columns |
 |---|---|---|---|
-| `Components` | ME_EC (library, ~2,760) | `COMPONENT_CATALOG`, `KPI_COMPONENT_DEMAND_BY_YEAR`, `MULTISOURCE_PART_MEMBERS`, `SC_EMS_PART` | ME_EC, Manufacturer, MPN, Description, HW Category, HW Subcategory, Component Status, Lifecycle, Years To EOL, ME_MS (all clusters, comma-separated), Primary ME_MS, EMS Part Numbers (`EMS:part`, comma-separated), Is Sourced By Us, Demand Y … Demand Y+10 |
-| `Multisource` | ME_MS (~420) | `MULTISOURCE_PARTS` + member demand | ME_MS, Sourcing Health, Member Count, Usable Member Count, Manufacturer Count, Demand Y … Demand Y+10 (sum of its own usable members only) |
+| `Components` | ME_EC (library, ~2,760) | `COMPONENT_CATALOG`, `KPI_COMPONENT_DEMAND_BY_YEAR`, `MULTISOURCE_PART_MEMBERS`, `SC_EMS_PART` | ME_EC, Manufacturer, MPN, Description, HW Category, HW Subcategory, Component Status, Lifecycle, Years To EOL, ME_MS (all clusters, comma-separated), Primary ME_MS, EMS Part Numbers (`EMS:part`, comma-separated), Is Sourced By Us, Demand 2025 … Demand Y+10 |
+| `Multisource` | ME_MS (~420) | `MULTISOURCE_PARTS` + member demand | ME_MS, Sourcing Health, Member Count, Usable Member Count, Manufacturer Count, Demand 2025 … Demand Y+10 (sum of its own usable members only) |
 | `Multisource_Members` | ME_MS × ME_EC | `MULTISOURCE_PART_MEMBERS` | ME_MS, ME_EC, Member Status, Is Usable, Member Priority, Manufacturer, MPN |
-| `Component_Usage` | ME_EC × product (~3,300) | `COMPONENT_DEMAND_FORECAST`, `COMPONENT_WHERE_USED` | ME_EC, MPN, Manufacturer, Product, Product ID, Project, Program, Customer, EMS, Qty Per Unit, Demand Y … Demand Y+10 |
+| `Component_Usage` | ME_EC × product (~3,300) | `COMPONENT_DEMAND_FORECAST`, `COMPONENT_WHERE_USED` | ME_EC, MPN, Manufacturer, Product, Product ID, Project, Program, Customer, EMS, Qty Per Unit, Demand 2025 … Demand Y+10 |
 | `Products` | customer product | `PRODUCT_CATALOG` | Product ID, Product Display Name, Project, Program, Customer, Sample Phase, EMS, SOP, Is Hierarchy Active |
 | `MECL_Price` | MECL quote × linked component (~20,900; a quote linked to two components appears twice, so the key is Price ID + ME_EC) | `COMPONENT_PRICE_ITEMS` | Price ID, ME_EC, Resolved ME_EC, Is Linked, Price Type, Price Owner, Vendor, Vendor Part Number, Volume Stage, Year, MOQ, Price, Currency, Price EUR (current rate), Quoted Unit, Quoted Manufacturer, Quoted MPN, Quote Reference, Quote File, Valid From, Valid Until, Is Valid Today, Is Binding, Created At |
 | `_Refresh_Log` | run × feed | Apps Script | Run ID, Started, Finished, Feed, Rows, Source Refreshed At, Status, Message; plus a fixed "Last successful refresh" cell |
@@ -110,7 +110,7 @@ Points to check when adapting the RFQ: year headers change from `2026` / `Usage 
 
 ## 9. Builder's calls (open to change)
 
-Separate repo `askhisti/Purchasing-Master`; Node for refresh scripts; 30-day snapshot retention; reject a row drop over 20%; usable multisource members only (active + pending); year window Y … Y+10; web-app transport with GitHub-branch fallback; Primary ME_MS rule as above; `Resolved ME_EC` by exact MPN match only; tab and column names as in §6.
+Separate repo `askhisti/Purchasing-Master`; Node for refresh scripts; 30-day snapshot retention; reject a row drop over 20%; usable multisource members only (active + pending); year window 2025 … Y+10; web-app transport with GitHub-branch fallback; Primary ME_MS rule as above; `Resolved ME_EC` by exact MPN match only; tab and column names as in §6.
 
 ## 10. Left to the builder
 

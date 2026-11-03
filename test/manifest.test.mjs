@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { loadManifest, headersFor, sqlColumnsFor } from '../refresh/lib/manifest.mjs';
+import { loadManifest, headersFor, sqlColumnsFor, demandYearsFor } from '../refresh/lib/manifest.mjs';
+import { renderFeedSql } from '../refresh/lib/sql.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -69,23 +70,34 @@ test('manifest lists the six feeds in order with spec tab names', () => {
 test('headers equal spec section 6 exactly', () => {
   for (const f of manifest.feeds) {
     const expected = [...SPEC[f.feed][1]];
-    if (WITH_DEMAND.has(f.feed)) for (let k = 0; k <= 10; k++) expected.push(`Demand ${2026 + k}`);
+    if (WITH_DEMAND.has(f.feed)) for (let y = 2025; y <= 2036; y++) expected.push(`Demand ${y}`);
     assert.deepEqual(headersFor(f, 2026), expected, f.feed);
     assert.equal(f.demandYears !== undefined, WITH_DEMAND.has(f.feed), f.feed);
   }
 });
 
-test('headersFor components ends with Demand 2026 ... Demand 2036', () => {
+test('headersFor components ends with Demand 2025 ... Demand 2036 in 2026', () => {
   const h = headersFor(manifest.feeds[0], 2026);
-  assert.deepEqual(h.slice(-11), Array.from({ length: 11 }, (_, k) => `Demand ${2026 + k}`));
+  assert.deepEqual(h.slice(-12), Array.from({ length: 12 }, (_, k) => `Demand ${2025 + k}`));
+});
+
+test('demand years start at a fixed first year and grow by one column each year', () => {
+  const f = manifest.feeds[0];
+  assert.deepEqual(demandYearsFor(f, 2026), Array.from({ length: 12 }, (_, k) => 2025 + k));
+  assert.deepEqual(demandYearsFor(f, 2027), Array.from({ length: 13 }, (_, k) => 2025 + k));
+  assert.deepEqual(headersFor(f, 2027).slice(-13, -12), ['Demand 2025'], 'old year columns are kept');
+  assert.deepEqual(demandYearsFor(manifest.feeds.find((x) => !x.demandYears), 2026), []);
+  assert.throws(() => demandYearsFor(f, 2026.5));
+  assert.throws(() => demandYearsFor(f, 2014), /no demand years/);
 });
 
 test('sqlColumnsFor excludes ROW_KEY and matches manifest columns', () => {
   for (const f of manifest.feeds) {
-    const cols = sqlColumnsFor(f);
+    const cols = sqlColumnsFor(f, 2026);
     assert.ok(!cols.includes('ROW_KEY'));
     assert.deepEqual(cols.slice(0, f.columns.length), f.columns.map((c) => c.sql));
-    assert.equal(cols.length, f.columns.length + (f.demandYears ? 11 : 0));
+    assert.equal(cols.length, f.columns.length + (f.demandYears ? 12 : 0));
+    if (f.demandYears) assert.deepEqual(cols.slice(-2), ['DEMAND_2035', 'DEMAND_2036']);
   }
 });
 
@@ -93,16 +105,17 @@ for (const f of loadManifest().feeds) {
   test(`${f.feed}: SQL file shape`, () => {
     const file = path.join(root, f.sqlFile);
     assert.ok(fs.existsSync(file), 'sqlFile exists');
-    const sql = fs.readFileSync(file, 'utf8');
+    const text = fs.readFileSync(file, 'utf8');
+    const sql = renderFeedSql(text, 2026, demandYearsFor(f, 2026));
+    assert.ok(!sql.includes('{{'), 'no placeholder left after rendering');
     const { aliases, s } = finalSelect(sql);
     assert.equal(aliases[0], 'ROW_KEY');
-    const expected = ['ROW_KEY', ...sqlColumnsFor(f)];
+    const expected = ['ROW_KEY', ...sqlColumnsFor(f, 2026)];
     assert.deepEqual(aliases, expected, 'aliases in manifest order');
     assert.equal(new Set(aliases).size, aliases.length, 'aliases unique');
-    const demand = aliases.filter((a) => /^DEMAND_Y\d+$/.test(a));
-    assert.equal(demand.length, f.demandYears ? 11 : 0);
-    const placeholders = sql.match(/\{\{[^}]*\}\}/g) || [];
-    assert.ok(placeholders.every((p) => p === '{{BASE_YEAR}}'), 'only {{BASE_YEAR}}');
+    const demand = aliases.filter((a) => /^DEMAND_\d{4}$/.test(a));
+    assert.equal(demand.length, f.demandYears ? 12 : 0);
+    assert.equal(/\{\{DEMAND:/.test(text), Boolean(f.demandYears), 'demand template only in demand feeds');
     // top-level ORDER BY / LIMIT
     let depth = 0;
     let top = '';

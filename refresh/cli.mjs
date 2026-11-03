@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { loadManifest, sqlColumnsFor } from './lib/manifest.mjs';
+import { loadManifest, sqlColumnsFor, demandYearsFor } from './lib/manifest.mjs';
 import { shapeFeed } from './lib/shape.mjs';
 import { getAccessToken, parseServiceAccountKey } from './lib/google-auth.mjs';
 import { buildPayload, uploadToInbox } from './lib/inbox.mjs';
@@ -18,7 +18,7 @@ const runSql = (sql) => `RUN_SQL\n${sql}`;
 
 function feedSql(root, feed, baseYear) {
   const text = fs.readFileSync(path.join(root, feed.sqlFile), 'utf8').trimEnd();
-  return renderFeedSql(text, baseYear);
+  return renderFeedSql(text, baseYear, demandYearsFor(feed, baseYear));
 }
 
 export function begin({ root, now = new Date() }) {
@@ -204,7 +204,7 @@ function prepareFeeds(root, state, manifest) {
     const seen = new Set();
     for (const page of d.pages) {
       const { rows, columns } = readPageRows(root, state.runId, page);
-      const want = ['ROW_KEY', ...sqlColumnsFor(feedDef)];
+      const want = ['ROW_KEY', ...sqlColumnsFor(feedDef, state.baseYear)];
       if (JSON.stringify(columns) !== JSON.stringify(want)) {
         throw new Error(`${d.feed}: capture ${page.captureSeq} column names do not match the manifest (got ${columns.join(',')})`);
       }
@@ -215,7 +215,7 @@ function prepareFeeds(root, state, manifest) {
         raw.push(r);
       }
     }
-    const shaped = shapeFeed(feedDef, state.baseYear, raw, sqlColumnsFor(feedDef));
+    const shaped = shapeFeed(feedDef, state.baseYear, raw, sqlColumnsFor(feedDef, state.baseYear));
     return { feedDef, ...shaped };
   });
 }

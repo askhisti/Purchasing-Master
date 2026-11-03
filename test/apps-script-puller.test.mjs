@@ -659,7 +659,7 @@ test('e2e: the real buildPayload output in the Inbox lands all six live tabs', (
     }
   };
   const prepared = feeds.map((feedDef) => {
-    const cols = sqlColumnsFor(feedDef);
+    const cols = sqlColumnsFor(feedDef, BASE_YEAR);
     const typeOf = (j) => (j < feedDef.columns.length ? feedDef.columns[j] : { sql: cols[j], type: 'number' });
     const rawRows = [0, 1].map((i) => [`${feedDef.feed}-${i}`, ...cols.map((_, j) => raw(feedDef, typeOf(j), i))]);
     return { feedDef, ...shapeFeed(feedDef, BASE_YEAR, rawRows, cols) };

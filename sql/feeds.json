@@ -74,8 +74,9 @@
         }
       ],
       "demandYears": {
-        "sqlPrefix": "DEMAND_Y",
-        "count": 11
+        "sqlPrefix": "DEMAND_",
+        "firstYear": 2025,
+        "yearsAhead": 10
       }
     },
     {
@@ -111,8 +112,9 @@
         }
       ],
       "demandYears": {
-        "sqlPrefix": "DEMAND_Y",
-        "count": 11
+        "sqlPrefix": "DEMAND_",
+        "firstYear": 2025,
+        "yearsAhead": 10
       }
     },
     {
@@ -216,8 +218,9 @@
         }
       ],
       "demandYears": {
-        "sqlPrefix": "DEMAND_Y",
-        "count": 11
+        "sqlPrefix": "DEMAND_",
+        "firstYear": 2025,
+        "yearsAhead": 10
       }
     },
     {

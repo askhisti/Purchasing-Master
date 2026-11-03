@@ -1,8 +1,9 @@
 // SQL builders for the refresh pipeline and adaptive page sizing.
-// Feed SQL files contain a literal {{BASE_YEAR}} placeholder and a single SELECT
-// whose first column is ROW_KEY; these helpers wrap that SELECT.
+// Feed SQL files contain a single SELECT whose first column is ROW_KEY, and may use the
+// placeholders {{BASE_YEAR}} and {{DEMAND: <template>}}; these helpers wrap that SELECT.
 
 const PLACEHOLDER = '{{BASE_YEAR}}';
+const DEMAND_TEMPLATE = /\{\{DEMAND:([^}]*)\}\}/g;
 const MIN_LIMIT = 100;
 const MAX_LIMIT = 20000;
 
@@ -12,13 +13,20 @@ function quoteLiteral(value) {
   return `'${String(value).replace(/\\/g, '\\\\').replace(/'/g, "''")}'`;
 }
 
-// Replace {{BASE_YEAR}} with the integer year. Any other placeholder is an error.
-export function renderFeedSql(sqlText, baseYear) {
+// Replace {{BASE_YEAR}} with the integer year, and expand each {{DEMAND: <template>}} into one
+// line per demand year with #YEAR# replaced (templates start with a comma, so lines join cleanly).
+// Any other placeholder is an error.
+export function renderFeedSql(sqlText, baseYear, demandYears = []) {
   if (!Number.isInteger(baseYear)) throw new Error(`baseYear must be an integer, got ${baseYear}`);
-  for (const m of sqlText.matchAll(/\{\{[^}]*\}\}/g)) {
+  const expanded = sqlText.replace(DEMAND_TEMPLATE, (_, template) => {
+    if (!template.includes('#YEAR#')) throw new Error(`DEMAND template without #YEAR#: ${template.trim()}`);
+    if (!demandYears.length) throw new Error('DEMAND template but no demand years');
+    return demandYears.map((y) => template.trim().split('#YEAR#').join(String(y))).join('\n');
+  });
+  for (const m of expanded.matchAll(/\{\{[^}]*\}\}/g)) {
     if (m[0] !== PLACEHOLDER) throw new Error(`unknown placeholder: ${m[0]}`);
   }
-  return sqlText.split(PLACEHOLDER).join(String(baseYear));
+  return expanded.split(PLACEHOLDER).join(String(baseYear));
 }
 
 // One row for total rows and distinct ROW_KEY values of the feed.

@@ -16,6 +16,17 @@ test('renderFeedSql throws on any other placeholder', () => {
   assert.throws(() => renderFeedSql('{{BASE_YEAR}} {{X}}', 2027));
 });
 
+test('renderFeedSql expands a DEMAND template once per year', () => {
+  const out = renderFeedSql('SELECT A {{DEMAND: , SUM(IFF(Y = #YEAR#, Q, 0)) AS DEMAND_#YEAR#}} FROM t', 2026, [2025, 2026]);
+  assert.equal(out, 'SELECT A , SUM(IFF(Y = 2025, Q, 0)) AS DEMAND_2025\n, SUM(IFF(Y = 2026, Q, 0)) AS DEMAND_2026 FROM t');
+});
+
+test('renderFeedSql throws on a DEMAND template without demand years', () => {
+  assert.throws(() => renderFeedSql('SELECT A {{DEMAND: , B AS DEMAND_#YEAR#}} FROM t', 2026), /demand years/);
+  assert.throws(() => renderFeedSql('SELECT A {{DEMAND: , B AS DEMAND_#YEAR#}} FROM t', 2026, []), /demand years/);
+  assert.throws(() => renderFeedSql('SELECT A {{DEMAND: , B}} FROM t', 2026, [2026]), /#YEAR#/);
+});
+
 test('renderFeedSql throws on a non-integer year', () => {
   assert.throws(() => renderFeedSql(FEED, 2027.5));
   assert.throws(() => renderFeedSql(FEED, '2027'));

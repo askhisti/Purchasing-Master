@@ -17,22 +17,26 @@ function resolveFeed(feed) {
   return f;
 }
 
-// Sheet header row for a feed; demand headers are generated as `Demand <baseYear+k>`.
-export function headersFor(feed, baseYear) {
+// Demand years of a feed: the fixed firstYear through baseYear + yearsAhead. The start never
+// moves, so each new year appends one column and no column is ever removed. [] without demand.
+export function demandYearsFor(feed, baseYear) {
   const f = resolveFeed(feed);
-  const headers = f.columns.map((c) => c.header);
-  if (f.demandYears) {
-    for (let k = 0; k < f.demandYears.count; k++) headers.push(`Demand ${baseYear + k}`);
-  }
-  return headers;
+  if (!f.demandYears) return [];
+  if (!Number.isInteger(baseYear)) throw new Error(`baseYear must be an integer, got ${baseYear}`);
+  const { firstYear, yearsAhead } = f.demandYears;
+  const last = baseYear + yearsAhead;
+  if (last < firstYear) throw new Error(`${f.feed}: no demand years for base year ${baseYear}`);
+  return Array.from({ length: last - firstYear + 1 }, (_, k) => firstYear + k);
 }
 
-// SQL column names in sheet order (ROW_KEY not included).
-export function sqlColumnsFor(feed) {
+// Sheet header row for a feed; demand headers are generated as `Demand <year>`.
+export function headersFor(feed, baseYear) {
   const f = resolveFeed(feed);
-  const cols = f.columns.map((c) => c.sql);
-  if (f.demandYears) {
-    for (let k = 0; k < f.demandYears.count; k++) cols.push(`${f.demandYears.sqlPrefix}${k}`);
-  }
-  return cols;
+  return [...f.columns.map((c) => c.header), ...demandYearsFor(f, baseYear).map((y) => `Demand ${y}`)];
+}
+
+// SQL column names in sheet order (ROW_KEY not included); demand columns are `<sqlPrefix><year>`.
+export function sqlColumnsFor(feed, baseYear) {
+  const f = resolveFeed(feed);
+  return [...f.columns.map((c) => c.sql), ...demandYearsFor(f, baseYear).map((y) => `${f.demandYears.sqlPrefix}${y}`)];
 }

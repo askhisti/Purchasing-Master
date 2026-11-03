@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { shapeFeed } from '../refresh/lib/shape.mjs';
-import { loadManifest, sqlColumnsFor } from '../refresh/lib/manifest.mjs';
+import { loadManifest, sqlColumnsFor, demandYearsFor } from '../refresh/lib/manifest.mjs';
 
 const feedDef = {
   feed: 'f', tab: 'F',
@@ -31,9 +31,9 @@ test('number, date and boolean conversions', () => {
 test('ROW_KEY dropped and demand headers follow base year', () => {
   const manifest = loadManifest();
   const f = manifest.feeds.find((x) => x.demandYears);
-  const sqlCols = sqlColumnsFor(f);
+  const sqlCols = sqlColumnsFor(f, 2027);
   const sample = { boolean: 'true', date: '2022-08-25' };
-  const types = [...f.columns.map((c) => c.type), ...Array(f.demandYears.count).fill('number')];
+  const types = [...f.columns.map((c) => c.type), ...demandYearsFor(f, 2027).map(() => 'number')];
   const raw = ['KEY', ...types.map((t) => sample[t] ?? '1')];
   const r = shapeFeed(f, 2027, [raw], sqlCols);
   assert.equal(r.headers.at(-1), 'Demand 2037');

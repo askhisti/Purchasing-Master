@@ -1,9 +1,7 @@
-import { headersFor } from './manifest.mjs';
+import { headersFor, demandYearsFor } from './manifest.mjs';
 
-function typesFor(feedDef) {
-  const types = feedDef.columns.map((c) => c.type);
-  if (feedDef.demandYears) for (let k = 0; k < feedDef.demandYears.count; k++) types.push('number');
-  return types;
+function typesFor(feedDef, baseYear) {
+  return [...feedDef.columns.map((c) => c.type), ...demandYearsFor(feedDef, baseYear).map(() => 'number')];
 }
 
 const isEmpty = (v) => v === null || v === undefined || v === '';
@@ -37,7 +35,7 @@ function convert(v, type) {
 // rawRows carry ROW_KEY in column 0; output rows follow sqlColumns order without it.
 export function shapeFeed(feedDef, baseYear, rawRows, sqlColumns) {
   const headers = headersFor(feedDef, baseYear);
-  const types = typesFor(feedDef);
+  const types = typesFor(feedDef, baseYear);
   if (sqlColumns.length !== headers.length) throw new Error(`${feedDef.feed}: column count mismatch`);
   const rows = rawRows.map((raw, i) => {
     if (raw.length !== sqlColumns.length + 1) throw new Error(`${feedDef.feed}: row ${i} has ${raw.length} columns, expected ${sqlColumns.length + 1}`);

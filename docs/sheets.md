@@ -1,6 +1,6 @@
 # MasterData tabs: contract notes (phase 1)
 
-Source of truth for headers is `sql/feeds.json`; SQL is in `sql/feeds/*.sql` (first column `ROW_KEY`, then manifest columns in order, then `DEMAND_Y0..DEMAND_Y10` where applicable). `{{BASE_YEAR}}` is the only placeholder. Demand headers are `Demand <BASE_YEAR+k>`, k = 0..10, appended after the listed columns. Health gate: `sql/health.sql`.
+Source of truth for headers is `sql/feeds.json`; SQL is in `sql/feeds/*.sql` (first column `ROW_KEY`, then manifest columns in order, then `DEMAND_<year>` for each demand year where applicable). Placeholders: `{{BASE_YEAR}}`, and `{{DEMAND: <template>}}`, which expands to one line per demand year with `#YEAR#` replaced (the template starts with a comma). Demand years run from the fixed `firstYear` 2025 (the first year with demand in Snowflake) to BASE_YEAR+10, so each January appends one column and none is ever removed. Demand headers are `Demand <year>`, appended after the listed columns. Health gate: `sql/health.sql`.
 
 ## Step 1 facts (verified against Snowflake on 2026-10-30)
 
@@ -13,16 +13,16 @@ Source of truth for headers is `sql/feeds.json`; SQL is in `sql/feeds/*.sql` (fi
 - Builder's calls: `Description` = `CORE_DESCRIPTION`, else `HW_DESCRIPTION`; `Lifecycle` = `HW_LIFECYCLE`, else `SE_LIFECYCLE` (HW populated for 666 of 2,757, SE for 2,510); `Years To EOL` = `YEARS_TO_END_OF_LIFE`.
 
 ## Components
-Key `ME_EC`. Sources `COMPONENT_CATALOG`, `KPI_COMPONENT_DEMAND_BY_YEAR`, `MULTISOURCE_PART_MEMBERS`, `SC_EMS_PART`. Columns: ME_EC (string), Manufacturer (string), MPN (string), Description (string), HW Category (string), HW Subcategory (string), Component Status (string), Lifecycle (string), Years To EOL (number), ME_MS (string; all usable clusters, comma-separated), Primary ME_MS (string; highest-numbered usable cluster), EMS Part Numbers (string; `EMS:part`, latest snapshot, comma-separated), Is Sourced By Us (boolean), Demand Y..Y+10 (number; `TOTAL_DEMAND` of sourced-by-us rows, 0 when none).
+Key `ME_EC`. Sources `COMPONENT_CATALOG`, `KPI_COMPONENT_DEMAND_BY_YEAR`, `MULTISOURCE_PART_MEMBERS`, `SC_EMS_PART`. Columns: ME_EC (string), Manufacturer (string), MPN (string), Description (string), HW Category (string), HW Subcategory (string), Component Status (string), Lifecycle (string), Years To EOL (number), ME_MS (string; all usable clusters, comma-separated), Primary ME_MS (string; highest-numbered usable cluster), EMS Part Numbers (string; `EMS:part`, latest snapshot, comma-separated), Is Sourced By Us (boolean), Demand 2025..Y+10 (number; `TOTAL_DEMAND` of sourced-by-us rows, 0 when none).
 
 ## Multisource
-Key `ME_MS`. Sources `MULTISOURCE_PARTS` plus member demand. Columns: ME_MS, Sourcing Health (string), Member Count, Usable Member Count, Manufacturer Count (numbers), Demand Y..Y+10 (sum over that cluster's own usable members only; never across clusters sharing a member).
+Key `ME_MS`. Sources `MULTISOURCE_PARTS` plus member demand. Columns: ME_MS, Sourcing Health (string), Member Count, Usable Member Count, Manufacturer Count (numbers), Demand 2025..Y+10 (sum over that cluster's own usable members only; never across clusters sharing a member).
 
 ## Multisource_Members
 Key `ME_MS|ME_EC`. Source `MULTISOURCE_PART_MEMBERS`, all member statuses. Columns: ME_MS, ME_EC, Member Status (strings), Is Usable (boolean), Member Priority (number), Manufacturer, MPN (strings).
 
 ## Component_Usage
-Key `ME_EC|PRODUCT_ID`. Sources `COMPONENT_DEMAND_FORECAST` (sourced by us, pivoted by `DEMAND_YEAR`, `DEMAND_QUANTITY`), `COMPONENT_WHERE_USED` (Project). Columns: ME_EC, MPN, Manufacturer, Product, Product ID (number), Project, Program, Customer, EMS (strings), Qty Per Unit (number, `QTY_PER_UNIT`), Demand Y..Y+10 (number, per product).
+Key `ME_EC|PRODUCT_ID`. Sources `COMPONENT_DEMAND_FORECAST` (sourced by us, pivoted by `DEMAND_YEAR`, `DEMAND_QUANTITY`), `COMPONENT_WHERE_USED` (Project). Columns: ME_EC, MPN, Manufacturer, Product, Product ID (number), Project, Program, Customer, EMS (strings), Qty Per Unit (number, `QTY_PER_UNIT`), Demand 2025..Y+10 (number, per product).
 
 ## Products
 Key `PRODUCT_ID`. Source `PRODUCT_CATALOG`. Columns: Product ID (number), Product Display Name, Project, Program, Customer (strings), Sample Phase (`PRODUCT_SAMPLE_PHASE`), EMS, SOP (date `YYYY-MM-DD`, `START_OF_PRODUCTION`), Is Hierarchy Active (boolean).

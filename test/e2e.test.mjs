@@ -9,7 +9,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { begin, next, finish } from '../refresh/cli.mjs';
-import { loadManifest, sqlColumnsFor, headersFor } from '../refresh/lib/manifest.mjs';
+import { loadManifest, sqlColumnsFor, headersFor, demandYearsFor } from '../refresh/lib/manifest.mjs';
 import { fakeGoogle, KEY_JSON } from './helpers/sa-key.mjs';
 
 const repo = fileURLToPath(new URL('..', import.meta.url));
@@ -45,7 +45,7 @@ function expected(type, raw) {
 
 function fixture(feed) {
   const n = ROWS_PER_FEED[feed.feed];
-  const columns = ['ROW_KEY', ...sqlColumnsFor(feed)];
+  const columns = ['ROW_KEY', ...sqlColumnsFor(feed, BASE_YEAR)];
   const raw = [];
   const sheet = [];
   for (let i = 0; i < n; i++) {
@@ -57,7 +57,7 @@ function fixture(feed) {
       s.push(expected(col.type, v));
     }
     if (feed.demandYears) {
-      for (let k = 0; k < feed.demandYears.count; k++) {
+      for (let k = 0; k < demandYearsFor(feed, BASE_YEAR).length; k++) {
         // An empty demand ('' and null) on the first row, numbers elsewhere.
         const v = i === 0 && k === 0 ? '' : i === 0 && k === 1 ? null : String(1000 * (k + 1) + i);
         r.push(v);
