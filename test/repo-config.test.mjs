@@ -25,16 +25,17 @@ test('item 7: .clasp.json filePushOrder lists every Apps Script source file (inc
   assert.equal(clasp.filePushOrder[0], 'Config.ts');
 });
 
-test('R55 / item 8: appsscript.json has no web app and no container UI scope', () => {
+test('R55 / item 8: appsscript.json has no web app; container UI only in MfrFile.ts', () => {
   const manifest = JSON.parse(read('apps-script/MasterData/appsscript.json'));
   assert.equal(manifest.webapp, undefined);
   assert.deepEqual(manifest.oauthScopes, [
     'https://www.googleapis.com/auth/spreadsheets',
     'https://www.googleapis.com/auth/drive',
     'https://www.googleapis.com/auth/script.scriptapp',
+    'https://www.googleapis.com/auth/script.container.ui',
   ]);
   const dir = new URL('../apps-script/MasterData/', import.meta.url);
-  for (const f of fs.readdirSync(dir).filter((n) => n.endsWith('.ts'))) {
+  for (const f of fs.readdirSync(dir).filter((n) => n.endsWith('.ts') && n !== 'MfrFile.ts')) {
     assert.ok(!/getUi\s*\(/.test(fs.readFileSync(new URL(f, dir), 'utf8')), `${f} must not use the container UI`);
   }
 });

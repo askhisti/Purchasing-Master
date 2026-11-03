@@ -62,6 +62,11 @@ var MASTERDATA_CONFIG = {
   LAST_PROCESSED_RUN_PROPERTY: 'LAST_PROCESSED_RUN',
   // Last error logged for a poll that failed outside any run, so a lasting problem is logged once.
   LAST_PULL_ERROR_PROPERTY: 'LAST_PULL_ERROR',
+  // Manufacturer files (Create manufacturer file menu): subfolder of FOLDER_ID, cell limit, price columns, blank price rows.
+  MFR_FOLDER_NAME: 'Manufacturer files',
+  MFR_MAX_CELLS: 2000000,
+  MFR_PRICE_YEARS: 5,
+  MFR_EXTRA_PRICE_ROWS: 300,
   LOG_SHEET: '_Refresh_Log',
   LOG_HEADERS: ['Run ID', 'Started', 'Finished', 'Feed', 'Rows', 'Source Refreshed At', 'Status', 'Message'],
   LOG_FIRST_ROW: 5,

@@ -13,6 +13,6 @@
   "jsonExtensions": [
     ".json"
   ],
-  "filePushOrder": ["Config.ts", "Core.ts", "Store.ts", "Sheets.ts", "Watchdog.ts", "WebApp.ts", "Puller.ts", "MfrSelect.ts"],
+  "filePushOrder": ["Config.ts", "Core.ts", "Store.ts", "Sheets.ts", "Watchdog.ts", "WebApp.ts", "Puller.ts", "MfrSelect.ts", "MfrFile.ts"],
   "skipSubdirectories": false
 }

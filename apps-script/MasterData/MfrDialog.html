@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html>
+<head>
+<base target="_top">
+<meta charset="utf-8">
+<style>
+  body { font-family: Arial, sans-serif; font-size: 13px; margin: 16px; color: #202124; }
+  label { display: block; margin: 6px 0; }
+  input[type=text] { width: 100%; box-sizing: border-box; padding: 6px; font-size: 13px; }
+  #tree { border: 1px solid #dadce0; height: 360px; overflow-y: auto; padding: 6px 10px; margin: 8px 0; }
+  .cat { font-weight: bold; margin-top: 6px; }
+  .sub { margin-left: 22px; }
+  .count { color: #5f6368; font-weight: normal; }
+  button { padding: 8px 18px; font-size: 13px; }
+  #status { margin-top: 12px; }
+  .error { color: #c5221f; }
+  .meta { color: #5f6368; }
+</style>
+</head>
+<body>
+  <label>Manufacturer<input type="text" id="manufacturer" autocomplete="off"></label>
+  <label><input type="checkbox" id="onlyUsed" checked> Only parts we use</label>
+  <div class="meta" id="meta">Loading categories...</div>
+  <div id="tree"></div>
+  <button id="create" disabled>Create</button>
+  <div id="status"></div>
+
+<script>
+  var checked = {}; // "category\u0001subcategory" -> true; kept across reloads of the tree
+  var KEY = '\u0001';
+
+  function el(tag, cls, text) {
+    var e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text !== undefined) e.textContent = text; // textContent: nothing from the sheet is parsed as HTML
+    return e;
+  }
+
+  function setStatus(node) {
+    var s = document.getElementById('status');
+    s.textContent = '';
+    if (node) s.appendChild(node);
+  }
+
+  function showError(err) {
+    setStatus(el('div', 'error', String(err && err.message ? err.message : err)));
+    document.getElementById('create').disabled = false;
+  }
+
+  function renderTree(tree) {
+    var root = document.getElementById('tree');
+    root.textContent = '';
+    tree.forEach(function (c) {
+      var catBox = document.createElement('input');
+      catBox.type = 'checkbox';
+      var catLabel = el('label', 'cat');
+      catLabel.appendChild(catBox);
+      catLabel.appendChild(document.createTextNode(' ' + c.category + ' '));
+      catLabel.appendChild(el('span', 'count', '(' + c.count + ')'));
+      root.appendChild(catLabel);
+      var subBoxes = [];
+      function syncCat() {
+        var n = subBoxes.filter(function (b) { return b.checked; }).length;
+        catBox.checked = n === subBoxes.length;
+        catBox.indeterminate = n > 0 && n < subBoxes.length;
+      }
+      c.subcategories.forEach(function (s) {
+        var key = c.category + KEY + s.subcategory;
+        var box = document.createElement('input');
+        box.type = 'checkbox';
+        box.checked = !!checked[key];
+        box.onchange = function () { if (box.checked) checked[key] = true; else delete checked[key]; syncCat(); };
+        subBoxes.push(box);
+        var label = el('label', 'sub');
+        label.appendChild(box);
+        label.appendChild(document.createTextNode(' ' + s.subcategory + ' '));
+        label.appendChild(el('span', 'count', '(' + s.count + ')'));
+        root.appendChild(label);
+      });
+      catBox.onchange = function () {
+        subBoxes.forEach(function (b) { b.checked = catBox.checked; b.onchange(); });
+      };
+      syncCat();
+    });
+  }
+
+  function loadTree() {
+    var create = document.getElementById('create');
+    create.disabled = true;
+    document.getElementById('meta').textContent = 'Loading categories...';
+    google.script.run
+      .withSuccessHandler(function (o) {
+        renderTree(o.tree);
+        document.getElementById('meta').textContent =
+          'Base year ' + o.baseYear + (o.refreshedAt ? ', data refreshed ' + o.refreshedAt + ' (Berlin)' : '');
+        create.disabled = false;
+      })
+      .withFailureHandler(function (err) {
+        document.getElementById('meta').textContent = '';
+        showError(err);
+      })
+      .getManufacturerFileOptions(document.getElementById('onlyUsed').checked);
+  }
+
+  function selection() {
+    return Object.keys(checked).map(function (k) {
+      var p = k.split(KEY);
+      return { category: p[0], subcategory: p[1] };
+    });
+  }
+
+  function link(text, href) {
+    var a = el('a', '', text);
+    if (/^https:\/\/docs\.google\.com\//.test(href)) a.href = href;
+    a.target = '_blank';
+    return a;
+  }
+
+  document.getElementById('onlyUsed').onchange = loadTree;
+  document.getElementById('create').onclick = function () {
+    var create = document.getElementById('create');
+    create.disabled = true;
+    setStatus(el('div', 'meta', 'Creating the file...'));
+    google.script.run
+      .withSuccessHandler(function (r) {
+        var box = el('div');
+        box.appendChild(el('div', '', r.name + ' (' + r.rowCount + ' rows)'));
+        box.appendChild(link('Open file', r.url));
+        box.appendChild(document.createTextNode(' | '));
+        box.appendChild(link('Download as Excel', r.xlsxUrl));
+        setStatus(box);
+        create.disabled = false;
+      })
+      .withFailureHandler(showError)
+      .createManufacturerFile({
+        manufacturer: document.getElementById('manufacturer').value,
+        selection: selection(),
+        onlyUsed: document.getElementById('onlyUsed').checked,
+      });
+  };
+  loadTree();
+</script>
+</body>
+</html>

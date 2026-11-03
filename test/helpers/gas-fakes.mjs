@@ -70,6 +70,14 @@ class FakeRange {
     return this;
   }
   clear() { this.clearContent(); return this.clearFormat(); }
+  setFontWeight(w) { this.sheet.ss.calls.push({ op: 'setFontWeight', sheet: this.sheet.name, a1: this.getA1Notation(), weight: w }); return this; }
+  setBackground(color) { this.sheet.ss.calls.push({ op: 'setBackground', sheet: this.sheet.name, a1: this.getA1Notation(), color }); return this; }
+  setDataValidation(rule) { this.sheet.validations.push({ a1: this.getA1Notation(), rule }); return this; }
+  getA1Notation() {
+    const letters = (n) => { let s = ''; for (; n > 0; n = Math.floor((n - 1) / 26)) s = String.fromCharCode(65 + ((n - 1) % 26)) + s; return s; };
+    const a = `${letters(this.col)}${this.row}`;
+    return this.numRows === 1 && this.numCols === 1 ? a : `${a}:${letters(this.col + this.numCols - 1)}${this.row + this.numRows - 1}`;
+  }
   // Copies values and number formats; the destination's top-left cell anchors the block.
   // Assumption: the destination grid must already be large enough (the code grows it explicitly).
   copyTo(dest) {
@@ -95,11 +103,27 @@ class FakeSheet {
     this.rows = []; // rows[r-1][c-1]
     this.fmts = []; // fmts[r-1][c-1], undefined = never set / cleared
     this.notes = {}; // 'row,col' -> note text
+    this.validations = []; // {a1, rule} recorded by setDataValidation
+    this.protections = []; // FakeProtection list recorded by protect()
+    this.frozenRows = 0;
     this.maxRows = DEFAULT_ROWS;
     this.maxCols = DEFAULT_COLS;
   }
   getName() { return this.name; }
   getSheetId() { return this.id; }
+  setFrozenRows(n) { this.frozenRows = n; return this; }
+  setColumnWidth() { return this; }
+  protect() {
+    const p = {
+      description: '', unprotected: [],
+      setDescription(d) { this.description = d; return this; },
+      getDescription() { return this.description; },
+      setUnprotectedRanges(r) { this.unprotected = Array.from(r); return this; },
+      getUnprotectedRanges() { return [...this.unprotected]; },
+    };
+    this.protections.push(p);
+    return p;
+  }
   setFormat(r, c, f) {
     while (this.fmts.length < r) this.fmts.push(undefined);
     if (!this.fmts[r - 1]) this.fmts[r - 1] = [];
@@ -193,7 +217,11 @@ export class FakeSpreadsheet {
     this.calls = [];
     this.nextId = 0;
     this.locale = 'en_US';
+    this.id = 'ss-active';
   }
+  getId() { return this.id; }
+  getUrl() { return `https://docs.google.com/spreadsheets/d/${this.id}/edit`; }
+  getName() { return this.title || ''; }
   getSpreadsheetLocale() { return this.locale; }
   setSpreadsheetLocale(locale) {
     this.calls.push({ op: 'setSpreadsheetLocale', locale });
@@ -248,6 +276,13 @@ class FakeFile {
     return this;
   }
   isTrashed() { return this.trashed; }
+  // Moves the file out of its current folder into dest (a file created outside any folder has folder null).
+  moveTo(dest) {
+    if (this.folder) this.folder.files = this.folder.files.filter((f) => f !== this);
+    this.folder = dest;
+    dest.files.push(this);
+    return this;
+  }
 }
 
 function iter(items) {
@@ -298,8 +333,14 @@ export class FakeFolder {
 export class FakeDrive {
   constructor(rootId) {
     this.byId = {};
+    this.filesById = {};
     this.seq = 0;
     this.root = new FakeFolder(this, '03_Master File from Snowflake', rootId);
+  }
+  getFileById(id) {
+    const f = this.filesById[id];
+    if (!f) throw new Error(`No item with the given ID could be found: ${id}`);
+    return f;
   }
   getFolderById(id) {
     const f = this.byId[id];
@@ -408,6 +449,9 @@ export function makeEnv({ props = {}, rootId = '1lP59mBX1dM24emOJlussSvMPbkBiTTU
   // lock.busy = true makes tryLock fail (another execution holds the script lock).
   const lock = { busy: false };
   const scriptApp = makeScriptApp();
+  const created = []; // spreadsheets made by SpreadsheetApp.create
+  const menus = []; // menus added by getUi().createMenu().addToUi()
+  const dialogs = []; // getUi().showModalDialog calls
   const context = {
     console,
     PropertiesService: {
@@ -428,8 +472,48 @@ export function makeEnv({ props = {}, rootId = '1lP59mBX1dM24emOJlussSvMPbkBiTTU
         releaseLock: () => { lockLog.push(['release']); },
       }),
     },
-    SpreadsheetApp: { getActiveSpreadsheet: () => ss },
-    DriveApp: { getFolderById: (id) => drive.getFolderById(id) },
+    SpreadsheetApp: {
+      getActiveSpreadsheet: () => ss,
+      // New spreadsheets land in the user's Drive root (outside the fake folder tree) with one sheet 'Sheet1'.
+      create: (name) => {
+        const n = created.length + 1;
+        const c = new FakeSpreadsheet();
+        c.id = `created-${n}`;
+        c.title = name;
+        c.insertSheet('Sheet1');
+        const file = new FakeFile(null, name, '', 'application/vnd.google-apps.spreadsheet');
+        drive.filesById[c.id] = file;
+        created.push(c);
+        return c;
+      },
+      newDataValidation: () => {
+        const rule = {};
+        const b = {
+          requireValueInList(values, dropdown) { rule.values = Array.from(values); rule.dropdown = dropdown; return b; },
+          setAllowInvalid(v) { rule.allowInvalid = v; return b; },
+          build: () => rule,
+        };
+        return b;
+      },
+      getUi: () => ({
+        createMenu: (title) => {
+          const menu = { title, items: [] };
+          const b = {
+            addItem(label, fn) { menu.items.push([label, fn]); return b; },
+            addToUi() { menus.push(menu); return b; },
+          };
+          return b;
+        },
+        showModalDialog: (html, title) => { dialogs.push({ html, title }); },
+      }),
+    },
+    HtmlService: {
+      createHtmlOutputFromFile: (name) => {
+        const o = { name, width: null, height: null, setWidth(w) { o.width = w; return o; }, setHeight(h) { o.height = h; return o; } };
+        return o;
+      },
+    },
+    DriveApp: { getFolderById: (id) => drive.getFolderById(id), getFileById: (id) => drive.getFileById(id) },
     Utilities: FakeUtilities,
     ScriptApp: scriptApp.ScriptApp,
     Logger: { log() {} },
@@ -444,5 +528,5 @@ export function makeEnv({ props = {}, rootId = '1lP59mBX1dM24emOJlussSvMPbkBiTTU
     const out = context.doPost({ postData: { contents: JSON.stringify(body) } });
     return JSON.parse(out.getContent());
   };
-  return { context, stored, ss, drive, inbox, lock, lockLog, post, triggers: scriptApp.triggers, trigger: scriptApp.trigger };
+  return { context, stored, ss, drive, inbox, created, menus, dialogs, lock, lockLog, post, triggers: scriptApp.triggers, trigger: scriptApp.trigger };
 }
