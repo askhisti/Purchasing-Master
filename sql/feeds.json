@@ -637,6 +637,252 @@
         "yearsAhead": 10,
         "headerPrefix": "Volume "
       }
+    },
+    {
+      "feed": "price_at_demand",
+      "tab": "Price_At_Demand",
+      "sqlFile": "sql/feeds/price_at_demand.sql",
+      "pageLimit": 500,
+      "columns": [
+        {
+          "sql": "ME_EC",
+          "header": "ME_EC",
+          "type": "string"
+        },
+        {
+          "sql": "MPN",
+          "header": "MPN",
+          "type": "string"
+        },
+        {
+          "sql": "MANUFACTURER",
+          "header": "Manufacturer",
+          "type": "string"
+        },
+        {
+          "sql": "YEAR",
+          "header": "Year",
+          "type": "number"
+        },
+        {
+          "sql": "EMS",
+          "header": "EMS",
+          "type": "string"
+        },
+        {
+          "sql": "EMS_DEMAND",
+          "header": "EMS Demand",
+          "type": "number"
+        },
+        {
+          "sql": "TOTAL_DEMAND",
+          "header": "Total Demand",
+          "type": "number"
+        },
+        {
+          "sql": "EMS_PRICE_EUR",
+          "header": "EMS Price EUR",
+          "type": "number"
+        },
+        {
+          "sql": "EMS_PRICE_STAGE",
+          "header": "EMS Price Stage",
+          "type": "number"
+        },
+        {
+          "sql": "LOA_PRICE_EUR",
+          "header": "LOA Price EUR",
+          "type": "number"
+        },
+        {
+          "sql": "LOA_PRICE_STAGE",
+          "header": "LOA Price Stage",
+          "type": "number"
+        },
+        {
+          "sql": "TARGET_PRICE_EUR",
+          "header": "Target Price EUR",
+          "type": "number"
+        },
+        {
+          "sql": "BEST_BINDING_PRICE_EUR",
+          "header": "Best Binding Price EUR",
+          "type": "number"
+        },
+        {
+          "sql": "BEST_BINDING_PRICE_TYPE",
+          "header": "Best Binding Price Type",
+          "type": "string"
+        },
+        {
+          "sql": "EXPECTED_SPEND_EUR",
+          "header": "Expected Spend EUR",
+          "type": "number"
+        },
+        {
+          "sql": "TARGET_SPEND_EUR",
+          "header": "Target Spend EUR",
+          "type": "number"
+        },
+        {
+          "sql": "GAP_TO_TARGET_EUR",
+          "header": "Gap To Target EUR",
+          "type": "number"
+        },
+        {
+          "sql": "IS_PRICED",
+          "header": "Is Priced",
+          "type": "boolean"
+        },
+        {
+          "sql": "IS_BELOW_LOWEST_STAGE",
+          "header": "Is Below Lowest Stage",
+          "type": "boolean"
+        },
+        {
+          "sql": "SOURCE_REFRESHED_AT",
+          "header": "Source Refreshed At",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "feed": "savings_levers",
+      "tab": "Savings_Levers",
+      "sqlFile": "sql/feeds/savings_levers.sql",
+      "pageLimit": 500,
+      "columns": [
+        {
+          "sql": "ME_EC",
+          "header": "ME_EC",
+          "type": "string"
+        },
+        {
+          "sql": "MPN",
+          "header": "MPN",
+          "type": "string"
+        },
+        {
+          "sql": "MANUFACTURER",
+          "header": "Manufacturer",
+          "type": "string"
+        },
+        {
+          "sql": "YEAR",
+          "header": "Year",
+          "type": "number"
+        },
+        {
+          "sql": "EMS",
+          "header": "EMS",
+          "type": "string"
+        },
+        {
+          "sql": "SPEND_RANK_IN_YEAR",
+          "header": "Spend Rank In Year",
+          "type": "number"
+        },
+        {
+          "sql": "CUMULATIVE_SPEND_SHARE_PCT",
+          "header": "Cumulative Spend Share %",
+          "type": "number"
+        },
+        {
+          "sql": "EXPECTED_SPEND_EUR",
+          "header": "Expected Spend EUR",
+          "type": "number"
+        },
+        {
+          "sql": "COMPONENT_SPEND_IN_YEAR_EUR",
+          "header": "Component Spend In Year EUR",
+          "type": "number"
+        },
+        {
+          "sql": "LOA_PASS_THROUGH_RISK_EUR",
+          "header": "LOA Pass-Through Risk EUR",
+          "type": "number"
+        },
+        {
+          "sql": "NO_LOA_SPEND_EUR",
+          "header": "No LOA Spend EUR",
+          "type": "number"
+        },
+        {
+          "sql": "EMS_HARMONISATION_SAVING_EUR",
+          "header": "EMS Harmonisation Saving EUR",
+          "type": "number"
+        },
+        {
+          "sql": "LOWEST_EMS",
+          "header": "Lowest EMS",
+          "type": "string"
+        },
+        {
+          "sql": "LOWEST_EMS_PRICE_EUR",
+          "header": "Lowest EMS Price EUR",
+          "type": "number"
+        },
+        {
+          "sql": "ALTERNATIVE_SAVING_EUR",
+          "header": "Alternative Saving EUR",
+          "type": "number"
+        },
+        {
+          "sql": "BEST_ALTERNATIVE_MPN",
+          "header": "Best Alternative MPN",
+          "type": "string"
+        },
+        {
+          "sql": "BEST_ALTERNATIVE_PRICE_EUR",
+          "header": "Best Alternative Price EUR",
+          "type": "number"
+        },
+        {
+          "sql": "STALE_PRICE_SPEND_EUR",
+          "header": "Stale Price Spend EUR",
+          "type": "number"
+        },
+        {
+          "sql": "BELOW_LOWEST_STAGE_SPEND_EUR",
+          "header": "Below Lowest Stage Spend EUR",
+          "type": "number"
+        },
+        {
+          "sql": "GAP_TO_TARGET_EUR",
+          "header": "Gap To Target EUR",
+          "type": "number"
+        },
+        {
+          "sql": "IS_QUOTE_EXPIRED",
+          "header": "Is Quote Expired",
+          "type": "boolean"
+        },
+        {
+          "sql": "IS_CARRIED_FORWARD",
+          "header": "Is Carried Forward",
+          "type": "boolean"
+        },
+        {
+          "sql": "PRICE_VALID_UNTIL",
+          "header": "Price Valid Until",
+          "type": "date"
+        },
+        {
+          "sql": "HAS_LOA_PRICE",
+          "header": "Has LOA Price",
+          "type": "boolean"
+        },
+        {
+          "sql": "HAS_TARGET_PRICE",
+          "header": "Has Target Price",
+          "type": "boolean"
+        },
+        {
+          "sql": "SOURCE_REFRESHED_AT",
+          "header": "Source Refreshed At",
+          "type": "string"
+        }
+      ]
     }
   ]
 }

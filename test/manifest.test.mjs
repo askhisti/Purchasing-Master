@@ -23,6 +23,10 @@ const MONTHLY = {
   component_demand_monthly: ['Component_Demand_Monthly', ['ME_EC', 'MPN', 'Manufacturer', 'HW Category', 'HW Subcategory', 'Primary ME_MS']],
   bom_demand_monthly: ['BOM_Demand_Monthly', ['ME_EC', 'MPN', 'Manufacturer', 'Product', 'Product ID', 'EMS', 'Flow', 'Qty Per Unit']],
 };
+const PRICE = {
+  price_at_demand: ['Price_At_Demand', ['ME_EC', 'MPN', 'Manufacturer', 'Year', 'EMS', 'EMS Demand', 'Total Demand', 'EMS Price EUR', 'EMS Price Stage', 'LOA Price EUR', 'LOA Price Stage', 'Target Price EUR', 'Best Binding Price EUR', 'Best Binding Price Type', 'Expected Spend EUR', 'Target Spend EUR', 'Gap To Target EUR', 'Is Priced', 'Is Below Lowest Stage', 'Source Refreshed At']],
+  savings_levers: ['Savings_Levers', ['ME_EC', 'MPN', 'Manufacturer', 'Year', 'EMS', 'Spend Rank In Year', 'Cumulative Spend Share %', 'Expected Spend EUR', 'Component Spend In Year EUR', 'LOA Pass-Through Risk EUR', 'No LOA Spend EUR', 'EMS Harmonisation Saving EUR', 'Lowest EMS', 'Lowest EMS Price EUR', 'Alternative Saving EUR', 'Best Alternative MPN', 'Best Alternative Price EUR', 'Stale Price Spend EUR', 'Below Lowest Stage Spend EUR', 'Gap To Target EUR', 'Is Quote Expired', 'Is Carried Forward', 'Price Valid Until', 'Has LOA Price', 'Has Target Price', 'Source Refreshed At']],
+};
 const months = Array.from({ length: 144 }, (_, k) => `${2025 + Math.floor(k / 12)}-${String(k % 12 + 1).padStart(2, '0')}`);
 
 // Blank out comments and string literals so structure scanning is safe.
@@ -69,8 +73,8 @@ function finalSelect(sql) {
 const manifest = loadManifest();
 
 test('manifest lists the feeds in order with spec tab names', () => {
-  assert.deepEqual(manifest.feeds.map((f) => f.feed), [...Object.keys(SPEC), ...Object.keys(MONTHLY), 'bom_sources']);
-  for (const f of manifest.feeds) assert.equal(f.tab, f.feed === 'bom_sources' ? 'BOM_Sources' : (SPEC[f.feed] || MONTHLY[f.feed])[0]);
+  assert.deepEqual(manifest.feeds.map((f) => f.feed), [...Object.keys(SPEC), ...Object.keys(MONTHLY), 'bom_sources', ...Object.keys(PRICE)]);
+  for (const f of manifest.feeds) assert.equal(f.tab, f.feed === 'bom_sources' ? 'BOM_Sources' : (SPEC[f.feed] || MONTHLY[f.feed] || PRICE[f.feed])[0]);
 });
 
 test('monthly feeds: headers, years and 144 month columns', () => {
@@ -87,6 +91,24 @@ test('monthly feeds: headers, years and 144 month columns', () => {
   assert.deepEqual(bom.slice(0, 8), MONTHLY.bom_demand_monthly[1]);
   assert.equal(bom.length, 8 + 144);
   for (const n of Object.keys(MONTHLY)) assert.equal(get(n).pageLimit, 200, n);
+});
+
+test('price feeds: headers exactly as spec section 5, pageLimit 500, no year or month columns', () => {
+  assert.equal(PRICE.price_at_demand[1].length, 20);
+  assert.equal(PRICE.savings_levers[1].length, 26);
+  for (const [name, [tab, headers]] of Object.entries(PRICE)) {
+    const f = manifest.feeds.find((x) => x.feed === name);
+    assert.ok(f, name + ' in manifest');
+    assert.equal(f.tab, tab);
+    assert.equal(f.pageLimit, 500);
+    assert.ok(!f.demandYears && !f.demandMonths && !f.demand, name + ' has no demand expansion');
+    assert.deepEqual(headersFor(f, 2026), headers);
+  }
+  const types = (n) => Object.fromEntries(manifest.feeds.find((x) => x.feed === n).columns.map((c) => [c.header, c.type]));
+  assert.equal(types('price_at_demand')['Source Refreshed At'], 'string');
+  assert.equal(types('savings_levers')['Price Valid Until'], 'date');
+  assert.equal(types('savings_levers')['Is Quote Expired'], 'boolean');
+  assert.equal(types('price_at_demand')['Year'], 'number');
 });
 
 test('bom_sources: 14 headers then Volume 2025..2036, tab BOM_Sources, pageLimit 300', () => {
