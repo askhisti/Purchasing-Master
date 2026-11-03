@@ -1,11 +1,11 @@
--- BOM_Sources: one row per BOM line (product x sourced primary component) and source. Position 1 is the primary itself; further positions are usable alternatives from the multisource clusters the primary belongs to. Volumes are the line's demand over both flows.
+-- BOM_Sources: one row per BOM line (product x sourced primary component) and source. Position 1 is the primary itself; further positions are usable alternatives from the multisource clusters the primary belongs to. Volumes are the line's demand over both flows, rounded to 2 decimals after summing.
 WITH L AS (
   SELECT
     PRODUCT_ID,
     PART_ID,
     MAX(PRODUCT_DISPLAY_NAME) AS PRODUCT_DISPLAY_NAME,
     MAX(EMS_NAME) AS EMS_NAME
-    {{DEMAND: , SUM(IFF(DEMAND_YEAR = #YEAR#, DEMAND_QUANTITY, 0)) AS V_#YEAR#}}
+    {{DEMAND: , SUM(IFF(DEMAND_YEAR = #YEAR#, DEMAND_QUANTITY, 0))::NUMBER(38,2) AS V_#YEAR#}}
   FROM MECL_PLATFORM.ANALYTICS.COMPONENT_DEMAND_FORECAST
   WHERE IS_SOURCED_BY_US AND PART_KIND = 'COMPONENT'
   GROUP BY PRODUCT_ID, PART_ID
@@ -45,7 +45,7 @@ S AS (
   FROM A1
 )
 SELECT
-  S.PRODUCT_ID::VARCHAR || '|' || CB.SUPPLIER_PARTNUMBER || '|' || LPAD(S.SOURCE_POSITION::VARCHAR, 2, '0') AS ROW_KEY,
+  S.PRODUCT_ID::VARCHAR || '|' || CB.SUPPLIER_PARTNUMBER || '|' || LPAD(S.SOURCE_POSITION::VARCHAR, 3, '0') AS ROW_KEY,
   L.PRODUCT_DISPLAY_NAME AS PRODUCT,
   S.PRODUCT_ID AS PRODUCT_ID,
   L.EMS_NAME AS EMS,
