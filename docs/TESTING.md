@@ -74,3 +74,4 @@ Run once in the cloud environment `purchasing-master` with the prompt "Run the n
 - [ ] Sharing the file with a test account as editor: only `Your alternatives` E-I and `Your pricing` D onward (and the extra rows) can be edited; the Yes/No list works on F.
 - [ ] The downloaded xlsx opens in Excel with all sheets.
 - [ ] A very large selection (all categories) gives `The selection is too large; select fewer categories.` or finishes in time; record the time and row count: ______.
+- [ ] Open a generated file as a different editor: `Our parts` and the grey columns of `Your alternatives` / `Your pricing` cannot be edited (the protections only work because other editors were removed from them).

@@ -114,8 +114,22 @@ class FakeSheet {
   setFrozenRows(n) { this.frozenRows = n; return this; }
   setColumnWidth() { return this; }
   protect() {
+    if (this.ss.events) this.ss.events.push('protect:' + this.name);
+    // Like real Sheet.protect(): editors mirror the spreadsheet (owner + one more editor) and the domain can edit.
+    const owner = { getEmail: () => 'owner@example.com' };
+    const other = { getEmail: () => 'editor@example.com' };
     const p = {
-      description: '', unprotected: [],
+      description: '', unprotected: [], editors: [owner, other], domainEdit: true,
+      getEditors() { return [...this.editors]; },
+      removeEditor(u) {
+        const email = typeof u === 'string' ? u : u.getEmail();
+        if (email === 'owner@example.com') throw new Error('The owner cannot be removed from the protection.');
+        this.editors = this.editors.filter((x) => x.getEmail() !== email);
+        return this;
+      },
+      removeEditors(users) { Array.from(users).forEach((u) => this.removeEditor(u)); return this; },
+      canDomainEdit() { return this.domainEdit; },
+      setDomainEdit(b) { this.domainEdit = b; return this; },
       setDescription(d) { this.description = d; return this; },
       getDescription() { return this.description; },
       setUnprotectedRanges(r) { this.unprotected = Array.from(r); return this; },
@@ -278,6 +292,7 @@ class FakeFile {
   isTrashed() { return this.trashed; }
   // Moves the file out of its current folder into dest (a file created outside any folder has folder null).
   moveTo(dest) {
+    if (this.events) this.events.push('move');
     if (this.folder) this.folder.files = this.folder.files.filter((f) => f !== this);
     this.folder = dest;
     dest.files.push(this);
@@ -449,6 +464,7 @@ export function makeEnv({ props = {}, rootId = '1lP59mBX1dM24emOJlussSvMPbkBiTTU
   // lock.busy = true makes tryLock fail (another execution holds the script lock).
   const lock = { busy: false };
   const scriptApp = makeScriptApp();
+  const events = []; // protect/move order of created spreadsheets
   const created = []; // spreadsheets made by SpreadsheetApp.create
   const menus = []; // menus added by getUi().createMenu().addToUi()
   const dialogs = []; // getUi().showModalDialog calls
@@ -480,8 +496,10 @@ export function makeEnv({ props = {}, rootId = '1lP59mBX1dM24emOJlussSvMPbkBiTTU
         const c = new FakeSpreadsheet();
         c.id = `created-${n}`;
         c.title = name;
+        c.events = events;
         c.insertSheet('Sheet1');
         const file = new FakeFile(null, name, '', 'application/vnd.google-apps.spreadsheet');
+        file.events = events;
         drive.filesById[c.id] = file;
         created.push(c);
         return c;
@@ -528,5 +546,5 @@ export function makeEnv({ props = {}, rootId = '1lP59mBX1dM24emOJlussSvMPbkBiTTU
     const out = context.doPost({ postData: { contents: JSON.stringify(body) } });
     return JSON.parse(out.getContent());
   };
-  return { context, stored, ss, drive, inbox, created, menus, dialogs, lock, lockLog, post, triggers: scriptApp.triggers, trigger: scriptApp.trigger };
+  return { context, stored, ss, drive, inbox, created, events, menus, dialogs, lock, lockLog, post, triggers: scriptApp.triggers, trigger: scriptApp.trigger };
 }

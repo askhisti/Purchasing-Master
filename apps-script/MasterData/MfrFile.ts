@@ -98,6 +98,16 @@ function mfrReadMeLines_(manufacturer, selection, baseYear, refreshedAt, now) {
   ];
 }
 
+// A new protection mirrors the spreadsheet's permissions until its editor list is changed, so remove every editor
+// (the owner/current user cannot be removed; that error is ignored) and switch off domain edit.
+function mfrLock_(protection) {
+  protection.getEditors().forEach(function (u) {
+    try { protection.removeEditor(u); } catch (e) { /* owner or current user stays */ }
+  });
+  if (protection.canDomainEdit()) protection.setDomainEdit(false);
+  return protection;
+}
+
 function createManufacturerFile(form) {
   var cfg = MASTERDATA_CONFIG;
   form = form || {};
@@ -125,7 +135,6 @@ function createManufacturerFile(form) {
   var now = new Date();
   var name = manufacturer + ' - component overview - ' + Utilities.formatDate(now, cfg.TIME_ZONE, 'yyyy-MM-dd');
   var file = SpreadsheetApp.create(name);
-  DriveApp.getFileById(file.getId()).moveTo(mfrFolder_());
 
   var readMe = file.getSheets()[0].setName('Read me');
   var ours = file.insertSheet('Our parts', 1);
@@ -147,7 +156,7 @@ function createManufacturerFile(form) {
   ours.getRange(1, 1, 1, width).setValues([built.headers]).setFontWeight('bold');
   mfrWriteRows_(ours, 2, built.rows, width);
   ours.setFrozenRows(1);
-  ours.protect().setDescription('Read-only');
+  mfrLock_(ours.protect().setDescription('Read-only'));
 
   // Your alternatives
   var altHeaders = ['ME_EC', 'Manufacturer', 'MPN', 'Description', 'Your Alternative MPN',
@@ -162,8 +171,8 @@ function createManufacturerFile(form) {
   alts.getRange(2, 6, n, 1).setDataValidation(
     SpreadsheetApp.newDataValidation().requireValueInList(['Yes', 'No'], true).setAllowInvalid(false).build());
   alts.setFrozenRows(1);
-  alts.protect().setDescription('Fill in columns E to I only')
-    .setUnprotectedRanges([alts.getRange(2, 5, n, 5)]);
+  mfrLock_(alts.protect().setDescription('Fill in columns E to I only')
+    .setUnprotectedRanges([alts.getRange(2, 5, n, 5)]));
 
   // Your pricing
   var priceHeaders = ['ME_EC', 'Manufacturer', 'MPN', 'Quoted MPN', 'Currency', 'MOQ', 'Lead Time (weeks)'];
@@ -181,8 +190,11 @@ function createManufacturerFile(form) {
   }), pw);
   price.getRange(2, 1, n, 3).setBackground(MFR_GREY_);
   price.setFrozenRows(1);
-  price.protect().setDescription('Fill in columns D onward only')
-    .setUnprotectedRanges([price.getRange(2, 4, n, pw - 3), price.getRange(n + 2, 1, extra, pw)]);
+  mfrLock_(price.protect().setDescription('Fill in columns D onward only')
+    .setUnprotectedRanges([price.getRange(2, 4, n, pw - 3), price.getRange(n + 2, 1, extra, pw)]));
+
+  // Protections are made while the file is still in the creator's My Drive; moving it afterwards.
+  DriveApp.getFileById(file.getId()).moveTo(mfrFolder_());
 
   return {
     url: file.getUrl(),

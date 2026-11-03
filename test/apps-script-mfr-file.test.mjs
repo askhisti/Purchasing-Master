@@ -117,3 +117,14 @@ test('options return tree, base year and refresh time', () => {
   assert.strictEqual(o.refreshedAt, '2026-11-02 06:30');
   assert.strictEqual(o.tree[0].category, 'MLCC');
 });
+
+test('protections drop all other editors and domain edit, before the file is moved', () => {
+  const e = setup();
+  e.context.createManufacturerFile(form());
+  for (const name of ['Our parts', 'Your alternatives', 'Your pricing']) {
+    const p = e.created[0].getSheetByName(name).protections[0];
+    assert.deepStrictEqual(p.getEditors().map((u) => u.getEmail()), ['owner@example.com'], name);
+    assert.strictEqual(p.canDomainEdit(), false, name);
+  }
+  assert.deepStrictEqual(plain(e.events), ['protect:Our parts', 'protect:Your alternatives', 'protect:Your pricing', 'move']);
+});
