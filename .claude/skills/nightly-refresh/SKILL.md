@@ -22,6 +22,7 @@ Drive `node refresh/cli.mjs` and the Snowflake connector tool `mcp__claude_ai_Sn
 
 - Run all commands in bash (POSIX shell); the `'\''` quoting above assumes it.
 - Never read, summarise or re-type result rows. Do not open capture files, run files or tool-result files.
+- A connector result that says it "exceeds maximum allowed tokens" and was saved to a file is normal for large pages, not an error: ignore the note's request to read the file and run `node refresh/cli.mjs next` (the capture hook reads the file).
 - Run no other Snowflake query during the run (any other call breaks the pending-SQL check).
 - Do not run any other Snowflake query — not PLATFORM_RULES, getting_started, find_data or anything else; the SQL from the CLI already applies the platform rules.
 - If the connector call itself errors, run `node refresh/cli.mjs fail 'connector error: <message>'` (single-quoted, quotes escaped as above).

@@ -12,6 +12,21 @@ function responseText(r) {
   return '';
 }
 
+// Results over Claude Code's MCP output limit reach the hook only as a note pointing at the
+// file the full result was saved to. Swap in that file when its length matches the note.
+const SAVED_NOTE = /^Error: result \(([\d,]+) characters[^)]*\) exceeds maximum allowed tokens\. Output has been saved to (.+?)\.\r?\n/;
+
+function savedResult(text) {
+  const m = SAVED_NOTE.exec(text);
+  if (!m) return null;
+  try {
+    const saved = readFileSync(m[2], 'utf8');
+    return saved.length === Number(m[1].replace(/,/g, '')) ? { text: saved, path: m[2] } : null;
+  } catch {
+    return null;
+  }
+}
+
 try {
   const input = JSON.parse(readFileSync(0, 'utf8'));
   const base = resolve(process.env.CLAUDE_PROJECT_DIR || input.cwd || process.cwd());
@@ -23,7 +38,9 @@ try {
       mkdirSync(dir, { recursive: true });
       // Normal path: "response" is the extracted text and "shape" is absent.
       // If no text can be extracted, keep the raw payload and mark shape "unrecognized".
-      const text = responseText(input.tool_response);
+      const extracted = responseText(input.tool_response);
+      const saved = savedResult(extracted);
+      const text = saved ? saved.text : extracted;
       const unrecognized = text === '';
       let seq = readdirSync(dir).filter((f) => /^\d{4}\.json$/.test(f)).length + 1;
       for (;;) {
@@ -33,6 +50,7 @@ try {
           sql: input.tool_input && input.tool_input.sql,
           response: unrecognized ? JSON.stringify(input.tool_response) : text,
           ...(unrecognized ? { shape: 'unrecognized' } : {}),
+          ...(saved ? { savedFrom: saved.path } : {}),
         };
         try {
           // 'wx' fails if the file exists, so concurrent hooks never overwrite each other.

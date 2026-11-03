@@ -107,6 +107,36 @@ test('normal captures carry no shape flag', () => {
   assert.equal('shape' in cap, false);
 });
 
+function savedNote(path, chars) {
+  return `Error: result (${chars.toLocaleString('en-US')} characters across 1 line) exceeds maximum allowed tokens. Output has been saved to ${path}.\nFormat: Plain text\nUse offset and limit parameters to read specific portions of the file.`;
+}
+
+test('an oversized result is read from the file the note points at', () => {
+  const dir = tempRepo('r1');
+  const savedPath = join(dir, 'saved dir', 'mcp-sql-1.txt');
+  mkdirSync(join(dir, 'saved dir'));
+  const full = expectedResponse.repeat(300);
+  writeFileSync(savedPath, full);
+  assert.equal(runHook(JSON.stringify({ ...input, tool_response: [{ type: 'text', text: savedNote(savedPath, full.length) }], cwd: dir })).status, 0);
+  const cap = JSON.parse(readFileSync(join(dir, 'runs', 'r1', 'captures', '0001.json'), 'utf8'));
+  assert.equal(cap.response, full);
+  assert.equal(cap.savedFrom, savedPath);
+  assert.equal('shape' in cap, false);
+});
+
+test('a saved-result note is kept as is when the file is missing or its length differs', () => {
+  const dir = tempRepo('r1');
+  const savedPath = join(dir, 'mcp-sql-2.txt');
+  writeFileSync(savedPath, 'short');
+  const missing = savedNote(join(dir, 'nope.txt'), 5);
+  const wrongLength = savedNote(savedPath, 6);
+  for (const note of [missing, wrongLength]) runHook(JSON.stringify({ ...input, tool_response: note, cwd: dir }));
+  const capDir = join(dir, 'runs', 'r1', 'captures');
+  const caps = readdirSync(capDir).sort().map((f) => JSON.parse(readFileSync(join(capDir, f), 'utf8')));
+  assert.deepEqual(caps.map((c) => c.response), [missing, wrongLength]);
+  assert.ok(caps.every((c) => !('savedFrom' in c)));
+});
+
 test('CLAUDE_PROJECT_DIR wins over input.cwd as the repo root', () => {
   const project = tempRepo('r1');
   const other = tempRepo('r2');
