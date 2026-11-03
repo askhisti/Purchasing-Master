@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert';
-import { makeEnv } from './helpers/gas-fakes.mjs';
+import { makeEnv, FAKE_OWNER, FAKE_UNREMOVABLE_EDITOR } from './helpers/gas-fakes.mjs';
 
 const plain = (v) => JSON.parse(JSON.stringify(v));
 const SEL = [{ category: 'MLCC', subcategory: '0402' }];
@@ -118,13 +118,110 @@ test('options return tree, base year and refresh time', () => {
   assert.strictEqual(o.tree[0].category, 'MLCC');
 });
 
+const SHEETS = ['Read me', 'Our parts', 'Your alternatives', 'Your pricing'];
+
+// I5/I6: every sheet, Read me included, is protected; protections are made before the file is moved.
 test('protections drop all other editors and domain edit, before the file is moved', () => {
   const e = setup();
   e.context.createManufacturerFile(form());
-  for (const name of ['Our parts', 'Your alternatives', 'Your pricing']) {
+  for (const name of SHEETS) {
     const p = e.created[0].getSheetByName(name).protections[0];
-    assert.deepStrictEqual(p.getEditors().map((u) => u.getEmail()), ['owner@example.com'], name);
+    assert.deepStrictEqual(p.getEditors().map((u) => u.getEmail()), [FAKE_OWNER], name);
     assert.strictEqual(p.canDomainEdit(), false, name);
   }
-  assert.deepStrictEqual(plain(e.events), ['protect:Our parts', 'protect:Your alternatives', 'protect:Your pricing', 'move']);
+  assert.strictEqual(e.created[0].getSheetByName('Read me').protections[0].getDescription(), 'Read-only');
+  assert.deepStrictEqual(plain(e.events), ['protect:Read me', 'protect:Our parts', 'protect:Your alternatives', 'protect:Your pricing', 'move']);
+});
+
+// I5: like a fresh My Drive file the protection starts with the owner only; the owner is added explicitly so the
+// editor list is set, then domain edit is switched off.
+test('a protection adds the file owner first, then switches off domain edit', () => {
+  const e = setup();
+  e.context.createManufacturerFile(form());
+  for (const name of SHEETS) {
+    assert.deepStrictEqual(plain(e.created[0].getSheetByName(name).protections[0].calls),
+      [`addEditor:${FAKE_OWNER}`, 'setDomainEdit:false'], name);
+  }
+});
+
+test('a protection removes every editor but the owner; one it cannot remove is logged, not fatal', () => {
+  const e = setup();
+  e.protection.editors = [FAKE_OWNER, 'editor@example.com', FAKE_UNREMOVABLE_EDITOR];
+  const warnings = [];
+  e.context.console = { ...console, warn: (m) => warnings.push(m) };
+  e.context.createManufacturerFile(form());
+  for (const name of SHEETS) {
+    const p = e.created[0].getSheetByName(name).protections[0];
+    assert.deepStrictEqual(plain(p.calls), [`addEditor:${FAKE_OWNER}`, 'removeEditor:editor@example.com',
+      `removeEditor:${FAKE_UNREMOVABLE_EDITOR}`, 'setDomainEdit:false'], name);
+    assert.deepStrictEqual(p.getEditors().map((u) => u.getEmail()), [FAKE_OWNER, FAKE_UNREMOVABLE_EDITOR], name);
+  }
+  assert.strictEqual(warnings.length, 4);
+  assert.strictEqual(warnings[1], 'mfrLock_: 1 editor(s) could not be removed from "Read-only"');
+});
+
+// I3/I4: header rows are text on every sheet; data rows are text except the volume columns of Our parts and the
+// numeric input columns of Your pricing.
+test('header rows are text; input columns are text except MOQ, lead time and prices', () => {
+  const e = setup();
+  e.context.createManufacturerFile(form());
+  const f = e.created[0];
+  const fmts = (name, row) => {
+    const s = f.getSheetByName(name);
+    return Array.from({ length: s.data()[0].length }, (_, j) => s.getFormat(row, j + 1));
+  };
+  for (const name of SHEETS.slice(1)) assert.ok(fmts(name, 1).every((x) => x === '@'), name + ' header row');
+  assert.strictEqual(f.getSheetByName('Read me').getFormat(1, 1), '@');
+
+  const ours = f.getSheetByName('Our parts');
+  const h = ours.data()[0];
+  assert.strictEqual(ours.getCell(1, h.indexOf('2026-01') + 1), '2026-01');
+  const textCols = h.indexOf('Volume Type') + 1;
+  assert.deepStrictEqual(fmts('Our parts', 2), h.map((_, j) => (j < textCols ? '@' : 'General')));
+
+  assert.deepStrictEqual(fmts('Your alternatives', 2), Array(9).fill('@'));
+  // ME_EC Manufacturer MPN | Quoted MPN Currency | MOQ Lead Time | Price x5 | Valid Until Comment
+  const priceRow = ['@', '@', '@', '@', '@', 'General', 'General', ...Array(5).fill('General'), '@', '@'];
+  assert.deepStrictEqual(fmts('Your pricing', 2), priceRow, 'part row');
+  assert.deepStrictEqual(fmts('Your pricing', 4), priceRow, 'first extra row');
+  assert.deepStrictEqual(fmts('Your pricing', 303), priceRow, 'last extra row');
+});
+
+test('a failed move trashes the new file and says so', () => {
+  const e = setup();
+  e.drive.failMove = () => { throw new Error('no access'); };
+  assert.throws(() => e.context.createManufacturerFile(form()),
+    /^Error: Could not save the file in the Manufacturer files folder: no access$/);
+  assert.strictEqual(e.drive.filesById['created-1'].isTrashed(), true);
+  assert.deepStrictEqual(e.drive.root.folder('Manufacturer files').fileNames(), []);
+});
+
+test('the Manufacturer files folder is resolved before the file is created', () => {
+  const e = setup();
+  e.drive.root.createFolder = () => { throw new Error('folder create failed'); };
+  assert.throws(() => e.context.createManufacturerFile(form()), /folder create failed/);
+  assert.strictEqual(e.created.length, 0);
+});
+
+test('read me says the refresh time is unknown when _Refresh_Log B1 is empty', () => {
+  const e = setup();
+  e.ss.getSheetByName('_Refresh_Log').setCell(1, 2, '');
+  e.context.createManufacturerFile(form());
+  const col = e.created[0].getSheetByName('Read me').data().map((r) => r[0]);
+  assert.ok(col[1].endsWith('from MasterData, data refreshed: unknown'), col[1]);
+  assert.ok(col.includes('From 2028 on, volumes are a yearly plan, not a build schedule.'));
+});
+
+test('base year: a number or digit string 2000..2100 from _Refresh_Log B2, else the Berlin year', () => {
+  const e = setup();
+  const berlinYear = Number(e.context.Utilities.formatDate(new Date(), 'Europe/Berlin', 'yyyy'));
+  const log = e.ss.getSheetByName('_Refresh_Log');
+  const year = (v) => { log.setCell(2, 2, v); return e.context.mfrBaseYear_(e.ss); };
+  assert.strictEqual(year(2031), 2031);
+  assert.strictEqual(year('2032'), 2032);
+  assert.strictEqual(year(2000), 2000);
+  assert.strictEqual(year(2100), 2100);
+  for (const bad of ['', 1999, 2101, 2026.5, '2026.0', ' 2026', '2e3', true, 'abc']) {
+    assert.strictEqual(year(bad), berlinYear, JSON.stringify(bad));
+  }
 });

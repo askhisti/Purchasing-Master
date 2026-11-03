@@ -71,7 +71,9 @@ Run once in the cloud environment `purchasing-master` with the prompt "Run the n
 - [ ] The dialog opens at a readable size, lists categories with counts, ticking a category ticks its subcategories, and toggling "Only parts we use" changes the counts.
 - [ ] Creating a file for a small selection returns within the 6-minute limit and shows the name, "Open file" and "Download as Excel" links; the file sits in `03_Master File from Snowflake/Manufacturer files`.
 - [ ] The four sheets are in order (`Read me`, `Our parts`, `Your alternatives`, `Your pricing`); `Our parts` is protected and frozen; part numbers with leading zeros keep them; volume columns show numbers (the `General` number format is accepted).
+- [ ] The month headers in `Our parts` read `2026-01` etc. (text, not dates).
 - [ ] Sharing the file with a test account as editor: only `Your alternatives` E-I and `Your pricing` D onward (and the extra rows) can be edited; the Yes/No list works on F.
 - [ ] The downloaded xlsx opens in Excel with all sheets.
 - [ ] A very large selection (all categories) gives `The selection is too large; select fewer categories.` or finishes in time; record the time and row count: ______.
-- [ ] Open a generated file as a different editor: `Our parts` and the grey columns of `Your alternatives` / `Your pricing` cannot be edited (the protections only work because other editors were removed from them).
+- [ ] Gate before the first external share: open a generated file as a different editor: `Read me`, `Our parts` and the grey columns of `Your alternatives` / `Your pricing` cannot be edited (the protections only work because other editors were removed from them). Do not share any file with a manufacturer until this passes.
+- [ ] `Read me` cannot be edited by another editor.

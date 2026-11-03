@@ -2,7 +2,6 @@
 // Plain JavaScript syntax (no type annotations) so Node vm can load this file in tests.
 
 var MFR_GREY_ = '#d9d9d9';
-var MFR_OUR_TEXT_COLUMNS_ = 12; // Category .. Volume Type; the volume and month columns follow.
 
 function onOpen() {
   SpreadsheetApp.getUi()
@@ -27,10 +26,11 @@ function mfrLogValue_(ss, row) {
   return sheet ? sheet.getRange(row, 2).getValue() : '';
 }
 
+// B2 of _Refresh_Log when it is a year 2000..2100 (a number or a digit string), else the current Berlin year.
 function mfrBaseYear_(ss) {
   var v = mfrLogValue_(ss, 2);
-  var n = Number(v);
-  if (v !== '' && v !== null && isFinite(n) && Math.floor(n) === n) return n;
+  var n = typeof v === 'number' ? v : typeof v === 'string' && /^\d+$/.test(v) ? Number(v) : NaN;
+  if (Math.floor(n) === n && n >= 2000 && n <= 2100) return n;
   return Number(Utilities.formatDate(new Date(), MASTERDATA_CONFIG.TIME_ZONE, 'yyyy'));
 }
 
@@ -83,7 +83,7 @@ function mfrReadMeLines_(manufacturer, selection, baseYear, refreshedAt, now) {
   return [
     ['Component overview for ' + manufacturer, false],
     ['Generated ' + Utilities.formatDate(now, MASTERDATA_CONFIG.TIME_ZONE, 'yyyy-MM-dd HH:mm') +
-      ' (Berlin) from MasterData, data refreshed ' + refreshedAt, false],
+      ' (Berlin) from MasterData, data refreshed' + (refreshedAt === '' ? ': unknown' : ' ' + refreshedAt), false],
     ['Categories: ' + cats, false],
     ['', false],
     ["Months are the finished product's planned build/shipment month at the EMS. There is no lead-time offset: order your components earlier.", true],
@@ -98,14 +98,24 @@ function mfrReadMeLines_(manufacturer, selection, baseYear, refreshedAt, now) {
   ];
 }
 
-// A new protection mirrors the spreadsheet's permissions until its editor list is changed, so remove every editor
-// (the owner/current user cannot be removed; that error is ignored) and switch off domain edit.
-function mfrLock_(protection) {
+// A new protection mirrors the spreadsheet's permissions until its editor list is changed: the file owner is added
+// explicitly first (so the list is set), then every other editor is removed and domain edit is switched off.
+// An editor that cannot be removed (e.g. the current user) is counted and logged, not fatal.
+function mfrLock_(protection, owner) {
+  protection.addEditor(owner);
+  var failed = 0;
   protection.getEditors().forEach(function (u) {
-    try { protection.removeEditor(u); } catch (e) { /* owner or current user stays */ }
+    if (u.getEmail() === owner.getEmail()) return;
+    try { protection.removeEditor(u); } catch (e) { failed++; }
   });
+  if (failed) console.warn('mfrLock_: ' + failed + ' editor(s) could not be removed from "' + protection.getDescription() + '"');
   if (protection.canDomainEdit()) protection.setDomainEdit(false);
   return protection;
+}
+
+// Header row as text, so a header such as '2026-01' is never turned into a date.
+function mfrWriteHeader_(sheet, headers) {
+  sheet.getRange(1, 1, 1, headers.length).setNumberFormat('@').setValues([headers]).setFontWeight('bold');
 }
 
 function createManufacturerFile(form) {
@@ -134,7 +144,10 @@ function createManufacturerFile(form) {
 
   var now = new Date();
   var name = manufacturer + ' - component overview - ' + Utilities.formatDate(now, cfg.TIME_ZONE, 'yyyy-MM-dd');
+  var folder = mfrFolder_(); // before the file exists, so a Drive problem here leaves nothing behind
   var file = SpreadsheetApp.create(name);
+  var driveFile = DriveApp.getFileById(file.getId());
+  var owner = driveFile.getOwner();
 
   var readMe = file.getSheets()[0].setName('Read me');
   var ours = file.insertSheet('Our parts', 1);
@@ -145,25 +158,28 @@ function createManufacturerFile(form) {
   // Read me
   var lines = mfrReadMeLines_(manufacturer, selection, baseYear, mfrRefreshedAt_(ss), now);
   readMe.setColumnWidth(1, 900);
+  readMe.getRange(1, 1).setNumberFormat('@');
   readMe.getRange(1, 1, lines.length, 1).setValues(lines.map(function (l) { return [l[0]]; }));
   lines.forEach(function (l, i) { if (l[1]) readMe.getRange(i + 1, 1).setFontWeight('bold'); });
+  mfrLock_(readMe.protect().setDescription('Read-only'), owner);
 
-  // Our parts
+  // Our parts: Category .. Volume Type are text; the volume and month columns that follow are numbers.
   var width = built.headers.length;
+  var textCols = built.headers.indexOf('Volume Type') + 1;
   mfrEnsureSize_(ours, built.rows.length + 1, width);
-  ours.getRange(1, 1, built.rows.length + 1, MFR_OUR_TEXT_COLUMNS_).setNumberFormat('@');
-  ours.getRange(1, MFR_OUR_TEXT_COLUMNS_ + 1, built.rows.length + 1, width - MFR_OUR_TEXT_COLUMNS_).setNumberFormat('General');
-  ours.getRange(1, 1, 1, width).setValues([built.headers]).setFontWeight('bold');
+  mfrWriteHeader_(ours, built.headers);
+  ours.getRange(2, 1, built.rows.length, textCols).setNumberFormat('@');
+  ours.getRange(2, textCols + 1, built.rows.length, width - textCols).setNumberFormat('General');
   mfrWriteRows_(ours, 2, built.rows, width);
   ours.setFrozenRows(1);
-  mfrLock_(ours.protect().setDescription('Read-only'));
+  mfrLock_(ours.protect().setDescription('Read-only'), owner);
 
   // Your alternatives
   var altHeaders = ['ME_EC', 'Manufacturer', 'MPN', 'Description', 'Your Alternative MPN',
     'Drop-in Replacement (Yes/No)', 'Differences', 'Datasheet Link', 'Comment'];
   mfrEnsureSize_(alts, n + 1, altHeaders.length);
-  alts.getRange(1, 1, 1, altHeaders.length).setValues([altHeaders]).setFontWeight('bold');
-  alts.getRange(2, 1, n, 4).setNumberFormat('@');
+  mfrWriteHeader_(alts, altHeaders);
+  alts.getRange(2, 1, n, altHeaders.length).setNumberFormat('@'); // all text, the input columns E-I too
   mfrWriteRows_(alts, 2, built.parts.map(function (p) {
     return [p.meEc, p.manufacturer, p.mpn, p.description, '', '', '', '', ''];
   }), altHeaders.length);
@@ -172,7 +188,7 @@ function createManufacturerFile(form) {
     SpreadsheetApp.newDataValidation().requireValueInList(['Yes', 'No'], true).setAllowInvalid(false).build());
   alts.setFrozenRows(1);
   mfrLock_(alts.protect().setDescription('Fill in columns E to I only')
-    .setUnprotectedRanges([alts.getRange(2, 5, n, 5)]));
+    .setUnprotectedRanges([alts.getRange(2, 5, n, 5)]), owner);
 
   // Your pricing
   var priceHeaders = ['ME_EC', 'Manufacturer', 'MPN', 'Quoted MPN', 'Currency', 'MOQ', 'Lead Time (weeks)'];
@@ -181,8 +197,15 @@ function createManufacturerFile(form) {
   var pw = priceHeaders.length;
   var extra = cfg.MFR_EXTRA_PRICE_ROWS;
   mfrEnsureSize_(price, n + extra + 1, pw);
-  price.getRange(1, 1, 1, pw).setValues([priceHeaders]).setFontWeight('bold');
-  price.getRange(2, 1, n, 3).setNumberFormat('@');
+  mfrWriteHeader_(price, priceHeaders);
+  // Part rows and extra rows: text, except MOQ, Lead Time (weeks) and the Price <year> columns.
+  var numeric = ['MOQ', 'Lead Time (weeks)'];
+  var rowFormats = priceHeaders.map(function (h) {
+    return numeric.indexOf(h) >= 0 || /^Price \d{4}$/.test(h) ? 'General' : '@';
+  });
+  var formats = [];
+  for (var r = 0; r < n + extra; r++) formats.push(rowFormats);
+  price.getRange(2, 1, n + extra, pw).setNumberFormats(formats);
   mfrWriteRows_(price, 2, built.parts.map(function (p) {
     var row = [p.meEc, p.manufacturer, p.mpn];
     while (row.length < pw) row.push('');
@@ -191,10 +214,15 @@ function createManufacturerFile(form) {
   price.getRange(2, 1, n, 3).setBackground(MFR_GREY_);
   price.setFrozenRows(1);
   mfrLock_(price.protect().setDescription('Fill in columns D onward only')
-    .setUnprotectedRanges([price.getRange(2, 4, n, pw - 3), price.getRange(n + 2, 1, extra, pw)]));
+    .setUnprotectedRanges([price.getRange(2, 4, n, pw - 3), price.getRange(n + 2, 1, extra, pw)]), owner);
 
   // Protections are made while the file is still in the creator's My Drive; moving it afterwards.
-  DriveApp.getFileById(file.getId()).moveTo(mfrFolder_());
+  try {
+    driveFile.moveTo(folder);
+  } catch (e) {
+    try { driveFile.setTrashed(true); } catch (trashErr) { /* the move error is the one reported */ }
+    throw new Error('Could not save the file in the Manufacturer files folder: ' + errorMessage_(e));
+  }
 
   return {
     url: file.getUrl(),

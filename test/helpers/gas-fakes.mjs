@@ -10,6 +10,10 @@ import zlib from 'node:zlib';
 export const NEW_FEED_TABS = ['Product_Volumes', 'Component_Demand_Monthly', 'BOM_Demand_Monthly', 'BOM_Sources', 'Price_At_Demand', 'Savings_Levers', 'Quote_Health', 'Multisource_Health', 'BOM_Coverage'];
 export const NEW_FEED_DEFS = NEW_FEED_TABS.map((tab) => ({ feed: tab.toLowerCase(), tab, headers: ['ME_EC', 'Value'], types: ['string', 'number'] }));
 
+// Owner of every spreadsheet SpreadsheetApp.create makes; an editor removeEditor refuses (the current user).
+export const FAKE_OWNER = 'owner@example.com';
+export const FAKE_UNREMOVABLE_EDITOR = 'self@example.com';
+
 const DEFAULT_ROWS = 1000;
 const DEFAULT_COLS = 26;
 
@@ -115,21 +119,30 @@ class FakeSheet {
   setColumnWidth() { return this; }
   protect() {
     if (this.ss.events) this.ss.events.push('protect:' + this.name);
-    // Like real Sheet.protect(): editors mirror the spreadsheet (owner + one more editor) and the domain can edit.
-    const owner = { getEmail: () => 'owner@example.com' };
-    const other = { getEmail: () => 'editor@example.com' };
+    // Like real Sheet.protect(): editors mirror the spreadsheet and the domain can edit. A fresh My Drive file has
+    // only its owner (ss.protectionEditors overrides the list); FAKE_UNREMOVABLE_EDITOR stands for the current user,
+    // whom removeEditor refuses. Every editor change is recorded in calls.
+    const user = (email) => ({ getEmail: () => email });
     const p = {
-      description: '', unprotected: [], editors: [owner, other], domainEdit: true,
+      description: '', unprotected: [], editors: (this.ss.protectionEditors || [FAKE_OWNER]).map(user), domainEdit: true, calls: [],
       getEditors() { return [...this.editors]; },
+      addEditor(u) {
+        const email = typeof u === 'string' ? u : u.getEmail();
+        this.calls.push('addEditor:' + email);
+        if (!this.editors.some((x) => x.getEmail() === email)) this.editors.push(user(email));
+        return this;
+      },
       removeEditor(u) {
         const email = typeof u === 'string' ? u : u.getEmail();
-        if (email === 'owner@example.com') throw new Error('The owner cannot be removed from the protection.');
+        this.calls.push('removeEditor:' + email);
+        if (email === FAKE_OWNER) throw new Error('The owner cannot be removed from the protection.');
+        if (email === FAKE_UNREMOVABLE_EDITOR) throw new Error('You cannot remove yourself from the protection.');
         this.editors = this.editors.filter((x) => x.getEmail() !== email);
         return this;
       },
       removeEditors(users) { Array.from(users).forEach((u) => this.removeEditor(u)); return this; },
       canDomainEdit() { return this.domainEdit; },
-      setDomainEdit(b) { this.domainEdit = b; return this; },
+      setDomainEdit(b) { this.calls.push('setDomainEdit:' + b); this.domainEdit = b; return this; },
       setDescription(d) { this.description = d; return this; },
       getDescription() { return this.description; },
       setUnprotectedRanges(r) { this.unprotected = Array.from(r); return this; },
@@ -285,13 +298,18 @@ class FakeFile {
     return makeBlob(Buffer.isBuffer(this.content) ? Buffer.from(this.content) : Buffer.from(this.content, 'utf8'), this.mimeType);
   }
   setTrashed(t) {
-    if (this.folder.drive.failTrash) this.folder.drive.failTrash(this); // test hook: simulate a Drive error
+    const drive = this.folder ? this.folder.drive : this.drive;
+    if (drive && drive.failTrash) drive.failTrash(this); // test hook: simulate a Drive error
+    if (this.events) this.events.push('trash');
     this.trashed = t;
     return this;
   }
   isTrashed() { return this.trashed; }
+  // Owner of a file outside the fake folder tree (made by SpreadsheetApp.create); shared-drive files have none.
+  getOwner() { return this.owner ? { getEmail: () => this.owner } : null; }
   // Moves the file out of its current folder into dest (a file created outside any folder has folder null).
   moveTo(dest) {
+    if (dest.drive.failMove) dest.drive.failMove(this, dest); // test hook: simulate a Drive error
     if (this.events) this.events.push('move');
     if (this.folder) this.folder.files = this.folder.files.filter((f) => f !== this);
     this.folder = dest;
@@ -476,7 +494,9 @@ export function makeEnv({ props = {}, rootId = '1lP59mBX1dM24emOJlussSvMPbkBiTTU
   // lock.busy = true makes tryLock fail (another execution holds the script lock).
   const lock = { busy: false };
   const scriptApp = makeScriptApp();
-  const events = []; // protect/move order of created spreadsheets
+  const events = []; // protect/move/trash order of created spreadsheets
+  // Editors a new protection of a created spreadsheet starts with (a fresh My Drive file: its owner only).
+  const protection = { editors: null };
   const created = []; // spreadsheets made by SpreadsheetApp.create
   const menus = []; // menus added by getUi().createMenu().addToUi()
   const dialogs = []; // getUi().showModalDialog calls
@@ -521,8 +541,11 @@ export function makeEnv({ props = {}, rootId = '1lP59mBX1dM24emOJlussSvMPbkBiTTU
         c.title = name;
         c.events = events;
         c.insertSheet('Sheet1');
+        c.protectionEditors = protection.editors;
         const file = new FakeFile(null, name, '', 'application/vnd.google-apps.spreadsheet');
         file.events = events;
+        file.drive = drive;
+        file.owner = FAKE_OWNER;
         drive.filesById[c.id] = file;
         created.push(c);
         return c;
@@ -569,5 +592,5 @@ export function makeEnv({ props = {}, rootId = '1lP59mBX1dM24emOJlussSvMPbkBiTTU
     const out = context.doPost({ postData: { contents: JSON.stringify(body) } });
     return JSON.parse(out.getContent());
   };
-  return { context, stored, propStats, ss, drive, inbox, created, events, menus, dialogs, lock, lockLog, post, triggers: scriptApp.triggers, trigger: scriptApp.trigger };
+  return { context, stored, propStats, ss, drive, inbox, created, events, protection, menus, dialogs, lock, lockLog, post, triggers: scriptApp.triggers, trigger: scriptApp.trigger };
 }
