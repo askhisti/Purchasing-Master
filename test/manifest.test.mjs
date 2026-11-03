@@ -69,8 +69,8 @@ function finalSelect(sql) {
 const manifest = loadManifest();
 
 test('manifest lists the feeds in order with spec tab names', () => {
-  assert.deepEqual(manifest.feeds.map((f) => f.feed), [...Object.keys(SPEC), ...Object.keys(MONTHLY)]);
-  for (const f of manifest.feeds) assert.equal(f.tab, (SPEC[f.feed] || MONTHLY[f.feed])[0]);
+  assert.deepEqual(manifest.feeds.map((f) => f.feed), [...Object.keys(SPEC), ...Object.keys(MONTHLY), 'bom_sources']);
+  for (const f of manifest.feeds) assert.equal(f.tab, f.feed === 'bom_sources' ? 'BOM_Sources' : (SPEC[f.feed] || MONTHLY[f.feed])[0]);
 });
 
 test('monthly feeds: headers, years and 144 month columns', () => {
@@ -87,6 +87,20 @@ test('monthly feeds: headers, years and 144 month columns', () => {
   assert.deepEqual(bom.slice(0, 8), MONTHLY.bom_demand_monthly[1]);
   assert.equal(bom.length, 8 + 144);
   for (const n of Object.keys(MONTHLY)) assert.equal(get(n).pageLimit, 200, n);
+});
+
+test('bom_sources: 14 headers then Volume 2025..2036, tab BOM_Sources, pageLimit 300', () => {
+  const f = manifest.feeds.find((x) => x.feed === 'bom_sources');
+  assert.ok(f, 'bom_sources in manifest');
+  assert.equal(f.tab, 'BOM_Sources');
+  assert.equal(f.pageLimit, 300);
+  const base = ['Product', 'Product ID', 'EMS', 'BOM ME_EC', 'ME_MS', 'Source Position', 'Source ME_EC', 'Manufacturer', 'MPN', 'HW Category', 'HW Subcategory', 'Member Status', 'Is Usable', 'Volume Type'];
+  const years = Array.from({ length: 12 }, (_, k) => `Volume ${2025 + k}`);
+  const h = headersFor(f, 2026);
+  assert.deepEqual(h, [...base, ...years]);
+  assert.equal(h.length, 26);
+  assert.equal(f.columns.find((c) => c.sql === 'SOURCE_POSITION').type, 'number');
+  assert.equal(f.columns.find((c) => c.sql === 'IS_USABLE').type, 'boolean');
 });
 
 test('headers equal spec section 6 exactly', () => {
@@ -120,7 +134,7 @@ test('sqlColumnsFor excludes ROW_KEY and matches manifest columns', () => {
     assert.ok(!cols.includes('ROW_KEY'));
     assert.deepEqual(cols.slice(0, f.columns.length), f.columns.map((c) => c.sql));
     assert.equal(cols.length, f.columns.length + (f.demandYears ? 12 : 0) + (f.demandMonths ? 144 : 0));
-    if (f.demandYears && !f.demandMonths) assert.deepEqual(cols.slice(-2), ['DEMAND_2035', 'DEMAND_2036']);
+    if (f.demandYears && !f.demandMonths) assert.deepEqual(cols.slice(-2), [`${f.demandYears.sqlPrefix}2035`, `${f.demandYears.sqlPrefix}2036`]);
   }
 });
 
@@ -136,7 +150,7 @@ for (const f of loadManifest().feeds) {
     const expected = ['ROW_KEY', ...sqlColumnsFor(f, 2026)];
     assert.deepEqual(aliases, expected, 'aliases in manifest order');
     assert.equal(new Set(aliases).size, aliases.length, 'aliases unique');
-    const demand = aliases.filter((a) => /^(DEMAND|UNITS)_\d{4}$/.test(a));
+    const demand = aliases.filter((a) => /^(DEMAND|UNITS|VOLUME)_\d{4}$/.test(a));
     assert.equal(demand.length, f.demandYears ? 12 : 0);
     assert.equal(/\{\{DEMAND:/.test(text), Boolean(f.demandYears), 'demand template only in demand feeds');
     // top-level ORDER BY / LIMIT
@@ -154,8 +168,8 @@ test('health.sql returns BASE_YEAR, PROBLEM_COUNT, PROBLEM_LIST', () => {
   assert.ok(!/\{\{/.test(sql));
 });
 
-test('paging: every feed starts at pageLimit 500 (200 for monthly feeds); targetPageChars is 250000', () => {
-  for (const f of manifest.feeds) assert.equal(f.pageLimit, MONTHLY[f.feed] ? 200 : 500, f.feed);
+test('paging: every feed starts at pageLimit 500 (200 for monthly feeds, 300 for bom_sources); targetPageChars is 250000', () => {
+  for (const f of manifest.feeds) assert.equal(f.pageLimit, f.feed === 'bom_sources' ? 300 : MONTHLY[f.feed] ? 200 : 500, f.feed);
   assert.equal(manifest.targetPageChars, 250000);
 });
 

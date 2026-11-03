@@ -553,6 +553,90 @@
         "firstYear": 2025,
         "yearsAhead": 10
       }
+    },
+    {
+      "feed": "bom_sources",
+      "tab": "BOM_Sources",
+      "sqlFile": "sql/feeds/bom_sources.sql",
+      "pageLimit": 300,
+      "columns": [
+        {
+          "sql": "PRODUCT",
+          "header": "Product",
+          "type": "string"
+        },
+        {
+          "sql": "PRODUCT_ID",
+          "header": "Product ID",
+          "type": "number"
+        },
+        {
+          "sql": "EMS",
+          "header": "EMS",
+          "type": "string"
+        },
+        {
+          "sql": "BOM_ME_EC",
+          "header": "BOM ME_EC",
+          "type": "string"
+        },
+        {
+          "sql": "ME_MS",
+          "header": "ME_MS",
+          "type": "string"
+        },
+        {
+          "sql": "SOURCE_POSITION",
+          "header": "Source Position",
+          "type": "number"
+        },
+        {
+          "sql": "SOURCE_ME_EC",
+          "header": "Source ME_EC",
+          "type": "string"
+        },
+        {
+          "sql": "MANUFACTURER",
+          "header": "Manufacturer",
+          "type": "string"
+        },
+        {
+          "sql": "MPN",
+          "header": "MPN",
+          "type": "string"
+        },
+        {
+          "sql": "HW_CATEGORY",
+          "header": "HW Category",
+          "type": "string"
+        },
+        {
+          "sql": "HW_SUBCATEGORY",
+          "header": "HW Subcategory",
+          "type": "string"
+        },
+        {
+          "sql": "MEMBER_STATUS",
+          "header": "Member Status",
+          "type": "string"
+        },
+        {
+          "sql": "IS_USABLE",
+          "header": "Is Usable",
+          "type": "boolean"
+        },
+        {
+          "sql": "VOLUME_TYPE",
+          "header": "Volume Type",
+          "type": "string"
+        }
+      ],
+      "demandYears": {
+        "sqlPrefix": "VOLUME_",
+        "firstYear": 2025,
+        "yearsAhead": 10,
+        "headerPrefix": "Volume "
+      }
     }
   ]
 }
