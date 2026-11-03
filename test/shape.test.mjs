@@ -57,3 +57,12 @@ test('number: whitespace is null, non-decimal forms rejected, exponent accepted'
   assert.throws(() => shapeFeed(feedDef, 2027, [['k', 'a', '0x1A', '', '']], cols), /f.*N/);
   assert.throws(() => shapeFeed(feedDef, 2027, [['k', 'a', 'Infinity', '', '']], cols), /f.*N/);
 });
+
+test('month columns shape as numbers', () => {
+  const f = { feed: 'm', columns: [{ sql: 'K', header: 'K', type: 'string' }], demandMonths: { sqlPrefix: 'M_', firstYear: 2025, yearsAhead: 0 } };
+  const raw = ['rk', 'k', '0', '', ...Array(10).fill('5')];
+  const r = shapeFeed(f, 2025, [raw], sqlColumnsFor(f, 2025));
+  assert.equal(r.rows[0][1], 0);
+  assert.equal(r.rows[0][2], null);
+  assert.equal(r.rows[0][3], 5);
+});

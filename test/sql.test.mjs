@@ -107,3 +107,11 @@ test('shrinkLimit never goes below 100', () => {
 test('shrinkLimit returns 100 (never NaN) when numRows is 0', () => {
   assert.equal(shrinkLimit(5000, 0, 0), 100);
 });
+
+test('renderFeedSql expands a MONTHS template once per month', () => {
+  const out = renderFeedSql('SELECT 1 AS ROW_KEY {{MONTHS: , SUM(IFF(MONTH_START = DATE_FROM_PARTS(#YEAR#, #MONTH#, 1), Q, 0)) AS M_#YEAR#_#MM#}}', 2025, [], [{ year: 2025, month: 1 }, { year: 2025, month: 12 }]);
+  assert.ok(out.includes('DATE_FROM_PARTS(2025, 1, 1), Q, 0)) AS M_2025_01'));
+  assert.ok(out.includes('AS M_2025_12'));
+  assert.throws(() => renderFeedSql('{{MONTHS: , #YEAR#}}', 2025), /no demand months/);
+  assert.throws(() => renderFeedSql('{{MONTHS: , X}}', 2025, [], [{ year: 2025, month: 1 }]), /#YEAR#/);
+});

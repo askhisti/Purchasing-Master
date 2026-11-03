@@ -1,7 +1,7 @@
-import { headersFor, demandYearsFor } from './manifest.mjs';
+import { headersFor, demandYearsFor, demandMonthsFor } from './manifest.mjs';
 
 function typesFor(feedDef, baseYear) {
-  return [...feedDef.columns.map((c) => c.type), ...demandYearsFor(feedDef, baseYear).map(() => 'number')];
+  return [...feedDef.columns.map((c) => c.type), ...demandYearsFor(feedDef, baseYear).map(() => 'number'), ...demandMonthsFor(feedDef, baseYear).map(() => 'number')];
 }
 
 const isEmpty = (v) => v === null || v === undefined || v === '';

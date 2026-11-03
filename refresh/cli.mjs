@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { loadManifest, sqlColumnsFor, demandYearsFor } from './lib/manifest.mjs';
+import { loadManifest, sqlColumnsFor, demandYearsFor, demandMonthsFor } from './lib/manifest.mjs';
 import { shapeFeed } from './lib/shape.mjs';
 import { getAccessToken, parseServiceAccountKey } from './lib/google-auth.mjs';
 import { buildPayload, uploadToInbox } from './lib/inbox.mjs';
@@ -18,7 +18,7 @@ const runSql = (sql) => `RUN_SQL\n${sql}`;
 
 function feedSql(root, feed, baseYear) {
   const text = fs.readFileSync(path.join(root, feed.sqlFile), 'utf8').trimEnd();
-  return renderFeedSql(text, baseYear, demandYearsFor(feed, baseYear));
+  return renderFeedSql(text, baseYear, demandYearsFor(feed, baseYear), demandMonthsFor(feed, baseYear));
 }
 
 export function begin({ root, now = new Date() }) {

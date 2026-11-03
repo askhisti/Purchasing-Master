@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { loadManifest, headersFor, sqlColumnsFor, demandYearsFor } from '../refresh/lib/manifest.mjs';
+import { loadManifest, headersFor, sqlColumnsFor, demandYearsFor, demandMonthsFor } from '../refresh/lib/manifest.mjs';
 import { renderFeedSql } from '../refresh/lib/sql.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -145,4 +145,27 @@ test('R34: health gate blocks on the MECL snapshot area and the three refresh ta
   // Feed view names never appear in PLATFORM_HEALTH, so they must not be the gate.
   for (const v of ['COMPONENT_CATALOG', 'MULTISOURCE_PARTS', 'COMPONENT_PRICE_ITEMS', "LIKE 'MECL%'"]) assert.ok(!n.includes(v), v);
   assert.ok(n.includes("COALESCE(AREA, '?') || '/' || COALESCE(OBJECT_NAME, '?') || ':' || COALESCE(STATUS, '?')"), 'PROBLEM_LIST entry format');
+});
+
+const wide = { feed: 'w', columns: [{ sql: 'ME_EC', header: 'ME_EC', type: 'string' }],
+  demandYears: { sqlPrefix: 'UNITS_', firstYear: 2025, yearsAhead: 10, headerPrefix: 'Units ' },
+  demandMonths: { sqlPrefix: 'M_', firstYear: 2025, yearsAhead: 10 } };
+test('month headers follow year headers', () => {
+  const h = headersFor(wide, 2026);
+  assert.equal(h.length, 1 + 12 + 144);
+  assert.deepEqual(h.slice(0, 3), ['ME_EC', 'Units 2025', 'Units 2026']);
+  assert.equal(h[13], '2025-01'); assert.equal(h.at(-1), '2036-12');
+  assert.deepEqual(sqlColumnsFor(wide, 2026).slice(12, 15), ['UNITS_2036', 'M_2025_01', 'M_2025_02']);
+});
+test('demand months grow by twelve in January', () => {
+  const m26 = headersFor(wide, 2026), m27 = headersFor(wide, 2027);
+  assert.equal(m27.length - m26.length, 1 + 12);
+  assert.equal(m27.at(-1), '2037-12');
+  assert.ok(m26.filter((x) => /^\d{4}-\d{2}$/.test(x)).every((x) => m27.includes(x)));
+});
+test('header prefix defaults to "Demand "', () => {
+  assert.equal(headersFor({ ...wide, demandYears: { sqlPrefix: 'D_', firstYear: 2025, yearsAhead: 0 }, demandMonths: undefined }, 2025)[1], 'Demand 2025');
+});
+test('demandMonthsFor is empty without demandMonths', () => {
+  assert.deepEqual(demandMonthsFor({ ...wide, demandMonths: undefined }, 2026), []);
 });

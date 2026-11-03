@@ -74,7 +74,10 @@ test('e2e: begin/next over the real manifest, then finish into the Drive Inbox',
   const root = mkdtempSync(join(tmpdir(), 'pm-e2e-'));
   cpSync(join(repo, 'sql'), join(root, 'sql'), { recursive: true });
   const manifest = loadManifest(join(root, 'sql', 'feeds.json'));
-  assert.equal(manifest.feeds.length, 6);
+  assert.equal(manifest.feeds.length, loadManifest().feeds.length);
+  for (const name of ['components', 'multisource', 'multisource_members', 'component_usage', 'products', 'mecl_price']) {
+    assert.ok(manifest.feeds.some((f) => f.feed === name), `feed ${name} missing`);
+  }
   const fixtures = Object.fromEntries(manifest.feeds.map((f) => [f.feed, fixture(f)]));
 
   let out = begin({ root, now: NOW });
