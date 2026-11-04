@@ -198,6 +198,9 @@ function commitRun_(req, retryable) {
   step('tab notes', function () {
     applyTabNotes_(ss);
   });
+  step('obsolete tabs', function () {
+    deleteObsoleteTabs_(ss);
+  });
   step('clear active run', clearActiveRun_);
   step('snapshot', function () {
     run.feeds.forEach(function (f) {

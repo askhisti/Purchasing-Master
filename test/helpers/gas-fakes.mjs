@@ -7,7 +7,7 @@ import vm from 'node:vm';
 import zlib from 'node:zlib';
 
 // The nine feeds added after the first six, one minimal definition each (feed name = lower-cased tab).
-export const NEW_FEED_TABS = ['Product_Volumes', 'Component_Demand_Monthly', 'BOM_Demand_Monthly', 'BOM_Sources', 'Price_At_Demand', 'Savings_Levers', 'Quote_Health', 'Multisource_Health', 'BOM_Coverage'];
+export const NEW_FEED_TABS = ['Product_Volumes', 'BOM_Coverage'];
 export const NEW_FEED_DEFS = NEW_FEED_TABS.map((tab) => ({ feed: tab.toLowerCase(), tab, headers: ['ME_EC', 'Value'], types: ['string', 'number'] }));
 
 // Owner of every spreadsheet SpreadsheetApp.create makes; an editor removeEditor refuses (the current user).

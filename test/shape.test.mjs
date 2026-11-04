@@ -30,7 +30,7 @@ test('number, date and boolean conversions', () => {
 
 test('ROW_KEY dropped and demand headers follow base year', () => {
   const manifest = loadManifest();
-  const f = manifest.feeds.find((x) => x.demandYears);
+  const f = manifest.feeds.find((x) => x.demandYears && !x.demandMonths);
   const sqlCols = sqlColumnsFor(f, 2027);
   const sample = { boolean: 'true', date: '2022-08-25' };
   const types = [...f.columns.map((c) => c.type), ...demandYearsFor(f, 2027).map(() => 'number')];

@@ -127,7 +127,7 @@ function snapshotDay(e, day) {
   return raw ? raw.folder(day) : null;
 }
 
-test('a ready run lands all fifteen tabs, logs OK, writes CSV snapshots and trashes its Inbox files', () => {
+test('a ready run lands all eight tabs, logs OK, writes CSV snapshots and trashes its Inbox files', () => {
   const e = env();
   const live = e.ss.seed('Components', [COMP.headers, ['OLD', 'old', 1, true, 1]]);
   const liveId = live.getSheetId();
@@ -698,7 +698,7 @@ function realPrepared(baseYear) {
 }
 
 // End to end: the exact files Node's buildPayload produces for the real sql/feeds.json feed definitions.
-test('e2e: the real buildPayload output in the Inbox lands all fifteen live tabs', () => {
+test('e2e: the real buildPayload output in the Inbox lands all eight live tabs', () => {
   const BASE_YEAR = 2026;
   const prepared = realPrepared(BASE_YEAR);
   const feeds = prepared.map((p) => p.feedDef);
@@ -741,10 +741,10 @@ test('e2e: the real buildPayload output in the Inbox lands all fifteen live tabs
 
 // C1: ACTIVE_RUN holds no column lists; each feed's headers and types are a property of their own. The fake property
 // store throws like Apps Script past 9 KB per value or 500 KB in all, so a full run proves the limits hold.
-test('a fifteen-feed run with base year 2036 stays within the Script Property limits', () => {
+test('an eight-feed run with base year 2036 stays within the Script Property limits', () => {
   const BASE_YEAR = 2036;
   const prepared = realPrepared(BASE_YEAR);
-  assert.strictEqual(prepared.length, 15);
+  assert.strictEqual(prepared.length, 8);
   const state = { runId: RUN, startedAt: STARTED, baseYear: BASE_YEAR, health: HEALTH };
   const { files } = buildPayload(state, prepared, { publishedAt: '2026-10-30T05:40:00.000Z' });
   const e = env();

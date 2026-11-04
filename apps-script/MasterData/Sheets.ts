@@ -60,6 +60,19 @@ function applyTabNotes_(ss) {
   });
 }
 
+// Deletes the tabs of removed feeds (MASTERDATA_CONFIG.OBSOLETE_TABS) that exist. Returns the deleted names.
+function deleteObsoleteTabs_(ss) {
+  var deleted = [];
+  MASTERDATA_CONFIG.OBSOLETE_TABS.forEach(function (name) {
+    var sheet = ss.getSheetByName(name);
+    if (sheet) {
+      ss.deleteSheet(sheet);
+      deleted.push(name);
+    }
+  });
+  return deleted;
+}
+
 // R23: swap keeps each live tab's identity (gid links, formulas, filters survive).
 // items: [{tab, rows, cols}] = the staged extent (header + data rows, header width).
 // Live tab missing: the staging tab is renamed and shown. Otherwise the staged block (values + formats)

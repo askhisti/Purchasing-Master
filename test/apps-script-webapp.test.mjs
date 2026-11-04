@@ -34,7 +34,7 @@ const PROD = {
   types: ['number', 'string', 'date'],
 };
 const PROD_ROWS = [[42, 'Inverter', '2027-01-15']];
-// Every begin lists all fifteen tabs (in TABS order); feeds not under test are tiny and usually empty.
+// Every begin lists all eight tabs (in TABS order); feeds not under test are tiny and usually empty.
 const DEFS = [
   COMP,
   { feed: 'multisource', tab: 'Multisource', headers: ['ME_MS', 'Member Count'], types: ['string', 'number'] },
@@ -317,24 +317,66 @@ test('once every live tab is swapped, later failures return ok:true with a warni
   assert.ok(snapshots(e).folder('2026-10-30').file('products.csv'));
 });
 
+const OBSOLETE = ['Component_Demand_Monthly', 'BOM_Demand_Monthly', 'BOM_Sources', 'Price_At_Demand', 'Savings_Levers', 'Quote_Health', 'Multisource_Health'];
+
 test('a commit sets the A1 note of the tabs listed in TAB_NOTES and no other', () => {
   const e = env();
   runProducts(e, RUN, PROD_ROWS);
   assert.strictEqual(commit(e, RUN).ok, true);
   const notes = e.context.MASTERDATA_CONFIG.TAB_NOTES;
-  assert.deepStrictEqual(Object.keys(notes), ['Product_Volumes', 'Component_Demand_Monthly', 'BOM_Demand_Monthly', 'BOM_Sources', 'Price_At_Demand', 'Savings_Levers', 'Quote_Health', 'Multisource_Health']);
-  assert.match(notes.Savings_Levers, /^One row per component, demand year and EMS\. Never add the lever columns together\./);
-  assert.strictEqual(e.ss.getSheetByName('Savings_Levers').getRange(1, 1).getNote(), notes.Savings_Levers);
+  assert.deepStrictEqual(Object.keys(notes).sort(), ['Components', 'Product_Volumes']);
+  assert.match(notes.Components, /^Demand is released-BOM demand of the primary source \(alternatives, scrap and lead time excluded\)\. Monthly columns exist for the current and next year only; months are the finished product's planned build\/shipment month at the EMS, with no lead-time offset\. Released-BOM coverage per year: see tab BOM_Coverage\.$/);
+  assert.match(notes.Product_Volumes, /Monthly columns exist for the current and next year only; each year's months come before its total/);
   for (const tab of Object.keys(notes)) assert.strictEqual(e.ss.getSheetByName(tab).getRange(1, 1).getNote(), notes[tab], tab);
-  for (const tab of ['Components', 'Products', 'BOM_Coverage']) assert.strictEqual(e.ss.getSheetByName(tab).getRange(1, 1).getNote(), '', `${tab} has no note`);
+  for (const tab of ['Products', 'BOM_Coverage']) assert.strictEqual(e.ss.getSheetByName(tab).getRange(1, 1).getNote(), '', `${tab} has no note`);
 });
 
 test('applyTabNotes_ skips tabs missing from the spreadsheet', () => {
   const e = env();
-  e.ss.seed('Savings_Levers', [['A']]);
+  e.ss.seed('Components', [['A']]);
   e.context.applyTabNotes_(e.ss);
-  assert.strictEqual(e.ss.getSheetByName('Savings_Levers').getRange(1, 1).getNote(), e.context.MASTERDATA_CONFIG.TAB_NOTES.Savings_Levers);
-  assert.deepStrictEqual(e.ss.names(), ['Savings_Levers']);
+  assert.strictEqual(e.ss.getSheetByName('Components').getRange(1, 1).getNote(), e.context.MASTERDATA_CONFIG.TAB_NOTES.Components);
+  assert.deepStrictEqual(e.ss.names(), ['Components']);
+});
+
+test('MASTERDATA_CONFIG.TABS lists the eight live tabs and OBSOLETE_TABS the seven removed ones', () => {
+  const c = env().context.MASTERDATA_CONFIG;
+  assert.deepStrictEqual([...c.TABS], TABS);
+  assert.strictEqual(c.TABS.length, 8);
+  assert.deepStrictEqual([...c.OBSOLETE_TABS].sort(), [...OBSOLETE].sort());
+});
+
+test('a successful commit deletes the obsolete tabs that exist and keeps the eight live tabs and other sheets', () => {
+  const e = env();
+  e.ss.seed('Notes', [['keep me']]);
+  for (const name of OBSOLETE.slice(0, 5)) e.ss.seed(name, [['old']]);
+  runProducts(e, RUN, PROD_ROWS);
+  const res = commit(e, RUN);
+  assert.strictEqual(res.ok, true);
+  assert.strictEqual(res.warning, undefined);
+  assert.deepStrictEqual(e.ss.names(), [...TABS, '_Refresh_Log', 'Notes']);
+  for (const name of OBSOLETE) assert.strictEqual(e.ss.getSheetByName(name), null, name);
+});
+
+test('a failed run deletes no obsolete tab', () => {
+  const e = env();
+  for (const name of OBSOLETE) e.ss.seed(name, [['old']]);
+  begin(e, RUN, { products: 2 });
+  chunk(e, RUN, 'products', 1, PROD_ROWS);
+  const res = commit(e, RUN);
+  assert.strictEqual(res.ok, false);
+  for (const name of OBSOLETE) assert.ok(e.ss.getSheetByName(name), name + ' kept');
+});
+
+test('a failing obsolete-tab deletion is a warning, not a failed run', () => {
+  const e = env();
+  e.ss.seed('Quote_Health', [['old']]);
+  e.context.deleteObsoleteTabs_ = () => { throw new Error('cannot delete'); };
+  runProducts(e, RUN, PROD_ROWS);
+  const res = commit(e, RUN);
+  assert.strictEqual(res.ok, true);
+  assert.match(res.warning, /obsolete tabs: cannot delete/);
+  assert.deepStrictEqual(e.ss.getSheetByName('Products').data(), [PROD.headers, ...PROD_ROWS]);
 });
 
 test('chunk with a different runId is rejected', () => {

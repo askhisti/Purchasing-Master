@@ -74,14 +74,9 @@ var MASTERDATA_CONFIG = {
   LOG_FIRST_ROW: 5,
   STAGING_PREFIX: '__staging_',
   // Live tab names in manifest (sql/feeds.json) order.
-  TABS: [
-    'Components',
-    'Multisource',
-    'Multisource_Members',
-    'Component_Usage',
-    'Products',
-    'MECL_Price',
-    'Product_Volumes',
+  TABS: ['Components', 'Multisource', 'Multisource_Members', 'Component_Usage', 'Products', 'MECL_Price', 'Product_Volumes', 'BOM_Coverage'],
+  // Tabs of removed feeds; deleted by deleteObsoleteTabs_ after a successful commit (a missing one is skipped).
+  OBSOLETE_TABS: [
     'Component_Demand_Monthly',
     'BOM_Demand_Monthly',
     'BOM_Sources',
@@ -89,25 +84,12 @@ var MASTERDATA_CONFIG = {
     'Savings_Levers',
     'Quote_Health',
     'Multisource_Health',
-    'BOM_Coverage',
   ],
   // A1 note of a live tab (set after every commit by applyTabNotes_); tabs without an entry get no note.
   TAB_NOTES: {
     Product_Volumes:
-      "One row per product and flow (series/sample). Planned finished-product units. Months are the finished product's planned build/shipment month at the EMS; there is no lead-time offset. From the year after next, most months are the yearly plan spread evenly over 12 months. Released-BOM coverage per year: see tab BOM_Coverage.",
-    Component_Demand_Monthly:
-      "Released-BOM demand of the primary source only (alternatives, scrap and lead time excluded). Months are the finished product's planned build/shipment month at the EMS; there is no lead-time offset. From the year after next, most months are the yearly plan spread evenly over 12 months. Released-BOM coverage per year: see tab BOM_Coverage.",
-    BOM_Demand_Monthly:
-      "Released-BOM demand of the primary source only (alternatives, scrap and lead time excluded). Months are the finished product's planned build/shipment month at the EMS; there is no lead-time offset. From the year after next, most months are the yearly plan spread evenly over 12 months. Released-BOM coverage per year: see tab BOM_Coverage.",
-    BOM_Sources:
-      "One row per BOM line (product x primary ME_EC) and source. Source position 1 is the BOM primary; its volume is demand. Other positions are usable multisource alternatives; their volume is the line's full volume as potential volume if sourced. Never add volumes across the rows of a line or across clusters.",
-    Price_At_Demand:
-      "One row per component, demand year and EMS. EUR prices and spend are at today's exchange rate and are estimates based on quotes, not prices paid. EMS prices apply only to that EMS's demand. Binding = EMS and LOA prices.",
-    Savings_Levers:
-      "One row per component, demand year and EMS. Never add the lever columns together. LOA Pass-Through Risk EUR is a risk, not a saving. Component Spend In Year EUR repeats on each EMS row: do not sum it. EUR at today's rate, estimates based on quotes.",
-    Quote_Health:
-      'One row per ME_EC with a binding (LOA or EMS) quote or any demand. Status: No quote / All expired / Expires within 90 days / Valid.',
-    Multisource_Health:
-      'One row per component that is a primary source on an active BOM. Only Sourcing Level SINGLE_SOURCE is a true single source. Interchangeability holds within one cluster only.',
+      "One row per product and flow (series/sample). Planned finished-product units. Monthly columns exist for the current and next year only; each year's months come before its total. Months are the finished product's planned build/shipment month at the EMS; there is no lead-time offset. Released-BOM coverage per year: see tab BOM_Coverage.",
+    Components:
+      "Demand is released-BOM demand of the primary source (alternatives, scrap and lead time excluded). Monthly columns exist for the current and next year only; months are the finished product's planned build/shipment month at the EMS, with no lead-time offset. Released-BOM coverage per year: see tab BOM_Coverage.",
   },
 };

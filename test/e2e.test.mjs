@@ -16,7 +16,7 @@ const repo = fileURLToPath(new URL('..', import.meta.url));
 const NOW = new Date('2026-10-30T06:00:03.000Z'); // 07:00:03 Berlin (CET)
 const RUN_ID = '2026-10-30T07-00-03';
 const BASE_YEAR = 2026;
-const ROWS_PER_FEED = { components: 3, multisource: 1, multisource_members: 2, component_usage: 3, products: 2, mecl_price: 1, product_volumes: 2, component_demand_monthly: 2, bom_demand_monthly: 2, bom_sources: 2, price_at_demand: 2, savings_levers: 2, quote_health: 2, multisource_health: 2, bom_coverage: 2 };
+const ROWS_PER_FEED = { components: 3, multisource: 1, multisource_members: 2, component_usage: 3, products: 2, mecl_price: 1, product_volumes: 2, bom_coverage: 2 };
 
 const resultText = (columns, rows) => JSON.stringify({
   query_id: 'q',
