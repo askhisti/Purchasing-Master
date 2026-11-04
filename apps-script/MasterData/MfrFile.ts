@@ -46,9 +46,10 @@ function mfrRefreshedAt_(ss) {
 function getManufacturerFileOptions(onlyUsed) {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var components = mfrReadTab_(ss, 'Components');
-  var bomSources = mfrReadTab_(ss, 'BOM_Sources');
+  var usage = mfrReadTab_(ss, 'Component_Usage');
+  var members = mfrReadTab_(ss, 'Multisource_Members');
   return {
-    tree: mfrCategoryTree_(components, bomSources, !!onlyUsed),
+    tree: mfrCategoryTree_(components, usage, members, !!onlyUsed),
     baseYear: mfrBaseYear_(ss),
     refreshedAt: mfrRefreshedAt_(ss),
   };
@@ -133,8 +134,9 @@ function createManufacturerFile(form) {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var input = {
     components: mfrReadTab_(ss, 'Components'),
-    bomSources: mfrReadTab_(ss, 'BOM_Sources'),
-    bomMonthly: mfrReadTab_(ss, 'BOM_Demand_Monthly'),
+    usage: mfrReadTab_(ss, 'Component_Usage'),
+    members: mfrReadTab_(ss, 'Multisource_Members'),
+    productVolumes: mfrReadTab_(ss, 'Product_Volumes'),
   };
   var baseYear = mfrBaseYear_(ss);
   var built = mfrBuildRows_(input, selection, onlyUsed, baseYear);

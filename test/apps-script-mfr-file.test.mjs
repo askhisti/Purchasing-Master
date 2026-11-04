@@ -8,23 +8,27 @@ const SEL = [{ category: 'MLCC', subcategory: '0402' }];
 function setup() {
   const e = makeEnv();
   const years = [];
-  for (let y = 2026; y <= 2036; y++) years.push('Volume ' + y);
+  for (let y = 2026; y <= 2036; y++) years.push('Demand ' + y);
   const months = [];
-  for (const y of [2025, 2026, 2027]) for (let m = 1; m <= 12; m++) months.push(y + '-' + String(m).padStart(2, '0'));
+  for (const y of [2026, 2027]) for (let m = 1; m <= 12; m++) months.push(y + '-' + String(m).padStart(2, '0'));
   e.ss.seed('Components', [
     ['ME_EC', 'Manufacturer', 'MPN', 'Description', 'HW Category', 'HW Subcategory', 'ME_MS'],
     ['C1', 'Murata', 'M1', 'cap 0402', 'MLCC', '0402', 'MS1'],
     ['C2', 'TDK', 'M2', 'cap 0603', 'MLCC', '0603', 'MS1'],
     ['C3', 'Yageo', 'M3', 'res', 'Resistors', 'Thick film', 'MS3'],
   ]);
-  e.ss.seed('BOM_Sources', [
-    ['Product', 'Product ID', 'EMS', 'BOM ME_EC', 'ME_MS', 'Source Position', 'Source ME_EC', 'Volume Type'].concat(years),
-    ['P1', 123, 'E1', 'C1', 'MS1', 1, 'C1', 'Demand'].concat(years.map((_, i) => 100 + i)),
-    ['P1', 123, 'E1', 'C1', 'MS1', 2, 'C2', 'Potential volume if sourced'].concat(years.map((_, i) => 200 + i)),
+  e.ss.seed('Component_Usage', [
+    ['ME_EC', 'MPN', 'Manufacturer', 'Product', 'Product ID', 'Project', 'Program', 'Customer', 'EMS', 'Qty Per Unit'].concat(years),
+    ['C1', 'M1', 'Murata', 'P1', 123, 'J', 'G', 'K', 'E1', 1].concat(years.map((_, i) => 100 + i)),
   ]);
-  e.ss.seed('BOM_Demand_Monthly', [
-    ['ME_EC', 'Product ID', 'EMS', 'Flow', 'Qty Per Unit'].concat(months),
-    ['C1', 123, 'E1', 'series', 1].concat(months.map((m) => (m === '2026-03' ? 10 : 0))),
+  e.ss.seed('Multisource_Members', [
+    ['ME_MS', 'ME_EC', 'Member Status', 'Is Usable', 'Member Priority', 'Manufacturer', 'MPN'],
+    ['MS1', 'C1', 'Released', true, 1, 'Murata', 'M1'],
+    ['MS1', 'C2', 'Released', true, 2, 'TDK', 'M2'],
+  ]);
+  e.ss.seed('Product_Volumes', [
+    ['Product ID', 'Product Display Name', 'Project', 'Program', 'Customer', 'EMS', 'Flow', 'Units 2025'].concat(months, ['Units 2026']),
+    [123, 'P1', 'J', 'G', 'K', 'E1', 'Series', 0].concat(months.map((m) => (m === '2026-03' ? 10 : 0)), [10]),
   ]);
   e.ss.seed('_Refresh_Log', [['Last successful refresh', '2026-11-02T05:30:00.000Z'], ['Base year', 2026]]);
   return e;
