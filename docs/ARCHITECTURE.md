@@ -19,6 +19,7 @@
 | `.claude/skills/nightly-refresh/SKILL.md` | Rules for the cloud run (drive the CLI, no editing of SQL, no row handling, no other Snowflake query) |
 | `.claude/settings.json` | Registers the capture hook |
 | `refresh/capture-hook.mjs` | Saves connector results while a run is active |
+| `scripts/it-handover.mjs`, `docs/IT-HANDOVER.md` | Handover pack for a direct Snowflake export by IT (rendered SQL per year, manifest template, file contract) |
 | `refresh/cli.mjs` | Commands `begin`, `next`, `finish`, `fail`; run state machine |
 | `refresh/lib/manifest.mjs`, `sql/feeds.json` | Feed definitions: tab, columns, types, first page limit; `targetPageChars` |
 | `refresh/lib/sql.mjs`, `sql/health.sql`, `sql/feeds/*.sql` | SQL rendering, count and keyset page queries, page sizing |
