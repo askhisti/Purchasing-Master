@@ -404,7 +404,7 @@
         {
           "sql": "CREATED_AT",
           "header": "Created At",
-          "type": "date"
+          "type": "string"
         }
       ]
     },

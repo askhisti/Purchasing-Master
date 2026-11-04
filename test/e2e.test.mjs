@@ -31,7 +31,7 @@ function cell(feed, col, i) {
   switch (col.type) {
     case 'number': return String((i + 1) * 1.5);
     case 'boolean': return i % 2 === 0 ? 'true' : 'false';
-    case 'date': return col.sql === 'CREATED_AT' ? '2026-10-01 08:15:00.000' : '2027-01-15';
+    case 'date': return '2027-01-15';
     default: return `${col.sql.toLowerCase()} ${i}`;
   }
 }

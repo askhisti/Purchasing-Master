@@ -469,7 +469,7 @@
         "date",
         "boolean",
         "boolean",
-        "date"
+        "string"
       ],
       "rowCount": "<rows in the data file>",
       "file": "<runId>__mecl_price.json.gz",

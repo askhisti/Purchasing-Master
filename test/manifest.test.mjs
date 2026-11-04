@@ -272,3 +272,10 @@ test('a month window beyond the demand years throws', () => {
   assert.throws(() => headersFor(bad, 2026), /not a demand year/);
   assert.throws(() => sqlColumnsFor(bad, 2026), /not a demand year/);
 });
+
+test('mecl_price Created At keeps the time of day (RFQ picks the newest EMS price by it)', () => {
+  const feed = loadManifest().feeds.find((f) => f.feed === 'mecl_price');
+  assert.equal(feed.columns.find((c) => c.sql === 'CREATED_AT').type, 'string');
+  const sql = fs.readFileSync(path.join(root, feed.sqlFile), 'utf8');
+  assert.match(sql, /TO_CHAR\(I\.CREATED_AT, 'YYYY-MM-DD HH24:MI:SS'\) AS CREATED_AT/);
+});
