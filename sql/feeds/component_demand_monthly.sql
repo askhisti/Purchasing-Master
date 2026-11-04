@@ -1,4 +1,4 @@
--- Component_Demand_Monthly: monthly demand per sourced component, summed over products and flows. Month columns come from the MONTHS template.
+-- Component_Demand_Monthly: monthly demand per sourced component, summed over products and flows. Month and year columns come from the SERIES template.
 -- F sums each component's demand per month (M = 'YYYY-MM') and rounds that sum to 2 decimals (Q), so each month line stays short.
 WITH F AS (
   SELECT
@@ -42,7 +42,7 @@ SELECT
   MAX(HW_CATEGORY) AS HW_CATEGORY,
   MAX(HW_SUBCATEGORY) AS HW_SUBCATEGORY,
   MAX(PRIMARY_ME_MS) AS PRIMARY_ME_MS
-  {{MONTHS: ,SUM(IFF(M='#YEAR#-#MM#',Q,0)) AS M_#YEAR#_#MM#}}
+  {{SERIES: ,SUM(IFF(LEFT(M,4)='#YEAR#',Q,0)) AS DEMAND_#YEAR# || ,SUM(IFF(M='#YEAR#-#MM#',Q,0)) AS M_#YEAR#_#MM#}}
 FROM L
 GROUP BY PART_ID, ME_EC
 HAVING SUM(RAW_Q) <> 0

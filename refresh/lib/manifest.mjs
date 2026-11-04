@@ -29,17 +29,14 @@ export function demandYearsFor(feed, baseYear) {
   return Array.from({ length: last - firstYear + 1 }, (_, k) => firstYear + k);
 }
 
-// Demand months of a feed: January of firstYear through December of baseYear + yearsAhead, so
-// each January appends twelve columns and none is ever removed. [] without demandMonths.
+// Demand months of a feed: all twelve months of baseYear through baseYear + yearsAhead (the
+// rolling window; feeds use yearsAhead 1 = 24 months). [] without demandMonths.
 export function demandMonthsFor(feed, baseYear) {
   const f = resolveFeed(feed);
   if (!f.demandMonths) return [];
   if (!Number.isInteger(baseYear)) throw new Error(`baseYear must be an integer, got ${baseYear}`);
-  const { firstYear, yearsAhead } = f.demandMonths;
-  const last = baseYear + yearsAhead;
-  if (last < firstYear) throw new Error(`${f.feed}: no demand months for base year ${baseYear}`);
   const months = [];
-  for (let year = firstYear; year <= last; year++) {
+  for (let year = baseYear; year <= baseYear + f.demandMonths.yearsAhead; year++) {
     for (let month = 1; month <= 12; month++) months.push({ year, month });
   }
   return months;
@@ -47,25 +44,32 @@ export function demandMonthsFor(feed, baseYear) {
 
 const pad2 = (n) => String(n).padStart(2, '0');
 
-// Sheet header row for a feed: the listed columns, then `<headerPrefix><year>` per demand year
-// (prefix defaults to "Demand "), then `YYYY-MM` per demand month.
-export function headersFor(feed, baseYear) {
-  const f = resolveFeed(feed);
+// Series columns in sheet order: for each demand year, the window months of that year, then the
+// year total. Each entry is {header, sql}.
+function seriesFor(f, baseYear) {
+  if (f.demandMonths && !f.demandYears) throw new Error(`${f.feed}: demandMonths requires demandYears`);
+  const months = demandMonthsFor(f, baseYear);
   const prefix = f.demandYears?.headerPrefix ?? 'Demand ';
-  return [
-    ...f.columns.map((c) => c.header),
-    ...demandYearsFor(f, baseYear).map((y) => `${prefix}${y}`),
-    ...demandMonthsFor(f, baseYear).map((m) => `${m.year}-${pad2(m.month)}`),
-  ];
+  const out = [];
+  for (const y of demandYearsFor(f, baseYear)) {
+    for (const m of months.filter((x) => x.year === y)) {
+      out.push({ header: `${y}-${pad2(m.month)}`, sql: `${f.demandMonths.sqlPrefix}${y}_${pad2(m.month)}` });
+    }
+    out.push({ header: `${prefix}${y}`, sql: `${f.demandYears.sqlPrefix}${y}` });
+  }
+  return out;
 }
 
-// SQL column names in sheet order (ROW_KEY not included); demand columns are `<sqlPrefix><year>`
+// Sheet header row: the listed columns, then per demand year its window months (`YYYY-MM`) and
+// the year column `<headerPrefix><year>` (prefix defaults to "Demand ").
+export function headersFor(feed, baseYear) {
+  const f = resolveFeed(feed);
+  return [...f.columns.map((c) => c.header), ...seriesFor(f, baseYear).map((c) => c.header)];
+}
+
+// SQL column names in sheet order (ROW_KEY not included); year columns are `<sqlPrefix><year>`
 // and month columns `<sqlPrefix><year>_<MM>`.
 export function sqlColumnsFor(feed, baseYear) {
   const f = resolveFeed(feed);
-  return [
-    ...f.columns.map((c) => c.sql),
-    ...demandYearsFor(f, baseYear).map((y) => `${f.demandYears.sqlPrefix}${y}`),
-    ...demandMonthsFor(f, baseYear).map((m) => `${f.demandMonths.sqlPrefix}${m.year}_${pad2(m.month)}`),
-  ];
+  return [...f.columns.map((c) => c.sql), ...seriesFor(f, baseYear).map((c) => c.sql)];
 }

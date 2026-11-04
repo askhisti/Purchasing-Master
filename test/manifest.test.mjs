@@ -83,19 +83,19 @@ test('manifest lists the feeds in order with spec tab names', () => {
   for (const f of manifest.feeds) assert.equal(f.tab, f.feed === 'bom_sources' ? 'BOM_Sources' : (SPEC[f.feed] || MONTHLY[f.feed] || PRICE[f.feed] || HEALTH[f.feed])[0]);
 });
 
-test('monthly feeds: headers, years and 144 month columns', () => {
+test('monthly feeds: headers, years and 24 rolling month columns', () => {
   const get = (n) => manifest.feeds.find((f) => f.feed === n);
   const cdm = headersFor(get('component_demand_monthly'), 2026);
-  assert.deepEqual(cdm, [...MONTHLY.component_demand_monthly[1], ...months]);
-  assert.equal(cdm.length, 6 + 144);
+  assert.deepEqual(cdm.slice(0, 6), MONTHLY.component_demand_monthly[1]);
+  assert.equal(cdm.length, 6 + 12 + 24);
   const pv = headersFor(get('product_volumes'), 2026);
   assert.deepEqual(pv.slice(0, 7), MONTHLY.product_volumes[1]);
-  assert.equal(pv[7], 'Units 2025'); assert.equal(pv[18], 'Units 2036');
-  assert.equal(pv[19], '2025-01'); assert.equal(pv.at(-1), '2036-12');
+  assert.equal(pv[7], 'Units 2025'); assert.equal(pv[8], '2026-01');
+  assert.equal(pv.at(-1), 'Units 2036');
   const bom = headersFor(get('bom_demand_monthly'), 2026);
   assert.equal(bom[7], 'Qty Per Unit');
   assert.deepEqual(bom.slice(0, 8), MONTHLY.bom_demand_monthly[1]);
-  assert.equal(bom.length, 8 + 144);
+  assert.equal(bom.length, 8 + 12 + 24);
   for (const n of Object.keys(MONTHLY)) assert.equal(get(n).pageLimit, 200, n);
 });
 
@@ -185,7 +185,7 @@ test('sqlColumnsFor excludes ROW_KEY and matches manifest columns', () => {
     const cols = sqlColumnsFor(f, 2026);
     assert.ok(!cols.includes('ROW_KEY'));
     assert.deepEqual(cols.slice(0, f.columns.length), f.columns.map((c) => c.sql));
-    assert.equal(cols.length, f.columns.length + (f.demandYears ? 12 : 0) + (f.demandMonths ? 144 : 0));
+    assert.equal(cols.length, f.columns.length + (f.demandYears ? 12 : 0) + (f.demandMonths ? 24 : 0));
     if (f.demandYears && !f.demandMonths) assert.deepEqual(cols.slice(-2), [`${f.demandYears.sqlPrefix}2035`, `${f.demandYears.sqlPrefix}2036`]);
   }
 });
@@ -204,7 +204,7 @@ for (const f of loadManifest().feeds) {
     assert.equal(new Set(aliases).size, aliases.length, 'aliases unique');
     const demand = aliases.filter((a) => /^(DEMAND|UNITS|VOLUME)_\d{4}$/.test(a));
     assert.equal(demand.length, f.demandYears ? 12 : 0);
-    assert.equal(/\{\{DEMAND:/.test(text), Boolean(f.demandYears), 'demand template only in demand feeds');
+    assert.equal(/\{\{(DEMAND|SERIES):/.test(text), Boolean(f.demandYears), 'demand template only in demand feeds');
     // top-level ORDER BY / LIMIT
     let depth = 0;
     let top = '';
@@ -238,23 +238,59 @@ test('R34: health gate blocks on the MECL snapshot area and the three refresh ta
 
 const wide = { feed: 'w', columns: [{ sql: 'ME_EC', header: 'ME_EC', type: 'string' }],
   demandYears: { sqlPrefix: 'UNITS_', firstYear: 2025, yearsAhead: 10, headerPrefix: 'Units ' },
-  demandMonths: { sqlPrefix: 'M_', firstYear: 2025, yearsAhead: 10 } };
-test('month headers follow year headers', () => {
+  demandMonths: { sqlPrefix: 'M_', yearsAhead: 1 } };
+test('month headers sit before their year header', () => {
   const h = headersFor(wide, 2026);
-  assert.equal(h.length, 1 + 12 + 144);
-  assert.deepEqual(h.slice(0, 3), ['ME_EC', 'Units 2025', 'Units 2026']);
-  assert.equal(h[13], '2025-01'); assert.equal(h.at(-1), '2036-12');
-  assert.deepEqual(sqlColumnsFor(wide, 2026).slice(12, 15), ['UNITS_2036', 'M_2025_01', 'M_2025_02']);
+  assert.equal(h.length, 1 + 12 + 24);
+  assert.deepEqual(h.slice(0, 3), ['ME_EC', 'Units 2025', '2026-01']);
+  assert.equal(h.at(-1), 'Units 2036');
+  assert.deepEqual(sqlColumnsFor(wide, 2026).slice(0, 3), ['ME_EC', 'UNITS_2025', 'M_2026_01']);
 });
-test('demand months grow by twelve in January', () => {
+test('rolling window moves a year in January: one year column and twelve months added, 2026 months dropped', () => {
   const m26 = headersFor(wide, 2026), m27 = headersFor(wide, 2027);
-  assert.equal(m27.length - m26.length, 1 + 12);
-  assert.equal(m27.at(-1), '2037-12');
-  assert.ok(m26.filter((x) => /^\d{4}-\d{2}$/.test(x)).every((x) => m27.includes(x)));
+  assert.equal(m27.length - m26.length, 1);
+  assert.ok(m27.includes('2028-12') && !m27.includes('2026-01'));
 });
 test('header prefix defaults to "Demand "', () => {
   assert.equal(headersFor({ ...wide, demandYears: { sqlPrefix: 'D_', firstYear: 2025, yearsAhead: 0 }, demandMonths: undefined }, 2025)[1], 'Demand 2025');
 });
 test('demandMonthsFor is empty without demandMonths', () => {
   assert.deepEqual(demandMonthsFor({ ...wide, demandMonths: undefined }, 2026), []);
+});
+
+const rolling = { feed: 'r', columns: [{ sql: 'K', header: 'K', type: 'string' }],
+  demandYears: { sqlPrefix: 'DEMAND_', firstYear: 2025, yearsAhead: 10 },
+  demandMonths: { sqlPrefix: 'M_', yearsAhead: 1 } };
+const mm = (y) => Array.from({ length: 12 }, (_, i) => `${y}-${String(i + 1).padStart(2, '0')}`);
+test('rolling series: months of Y and Y+1 sit directly before their year total', () => {
+  const h = headersFor(rolling, 2026);
+  assert.deepEqual(h, ['K', 'Demand 2025', ...mm(2026), 'Demand 2026', ...mm(2027), 'Demand 2027',
+    ...Array.from({ length: 9 }, (_, k) => `Demand ${2028 + k}`)]);
+  assert.equal(h.length - 1, 12 + 24);
+  const s = sqlColumnsFor(rolling, 2026);
+  assert.equal(s.length, h.length);
+  assert.deepEqual(s.slice(0, 3), ['K', 'DEMAND_2025', 'M_2026_01']);
+  assert.equal(s[14], 'DEMAND_2026'); assert.equal(s.at(-1), 'DEMAND_2036');
+});
+test('rolling series: base year 2027 drops 2026 months but keeps Demand 2026', () => {
+  const h = headersFor(rolling, 2027);
+  assert.ok(!h.some((x) => /^2026-/.test(x)));
+  assert.ok(h.includes('Demand 2026'));
+  assert.equal(h[h.indexOf('Demand 2027') - 1], '2027-12');
+  assert.equal(h[h.indexOf('Demand 2028') - 1], '2028-12');
+  assert.deepEqual(demandMonthsFor(rolling, 2027).length, 24);
+  assert.deepEqual(demandMonthsFor(rolling, 2027)[0], { year: 2027, month: 1 });
+});
+test('rolling series: SERIES renders aliases in sqlColumnsFor order', () => {
+  for (const by of [2026, 2027]) {
+    const sql = renderFeedSql('SELECT K AS ROW_KEY, K AS K {{SERIES: , D_#YEAR# AS DEMAND_#YEAR# || , M#YEAR##MM# AS M_#YEAR#_#MM#}} FROM T',
+      by, demandYearsFor(rolling, by), demandMonthsFor(rolling, by));
+    const aliases = [...sql.matchAll(/\bAS (\w+)/g)].map((m) => m[1]);
+    assert.deepEqual(aliases, ['ROW_KEY', ...sqlColumnsFor(rolling, by)]);
+  }
+});
+test('demandMonths without demandYears throws', () => {
+  const bad = { ...rolling, demandYears: undefined };
+  assert.throws(() => headersFor(bad, 2026), /demandYears/);
+  assert.throws(() => sqlColumnsFor(bad, 2026), /demandYears/);
 });

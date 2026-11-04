@@ -1,4 +1,4 @@
--- BOM_Demand_Monthly: monthly demand per sourced component x product x flow, with quantity per unit. Month columns come from the MONTHS template.
+-- BOM_Demand_Monthly: monthly demand per sourced component x product x flow, with quantity per unit. Month and year columns come from the SERIES template.
 -- F sums the demand per line and month (M = 'YYYY-MM') and rounds that sum to 2 decimals (Q), so each month line stays short.
 WITH F AS (
   SELECT
@@ -33,6 +33,6 @@ SELECT
   MAX(EMS_NAME) AS EMS,
   FLOW AS FLOW,
   MAX(QTY_PER_UNIT)::FLOAT AS QTY_PER_UNIT
-  {{MONTHS: ,SUM(IFF(M='#YEAR#-#MM#',Q,0)) AS M_#YEAR#_#MM#}}
+  {{SERIES: ,SUM(IFF(LEFT(M,4)='#YEAR#',Q,0)) AS DEMAND_#YEAR# || ,SUM(IFF(M='#YEAR#-#MM#',Q,0)) AS M_#YEAR#_#MM#}}
 FROM L
 GROUP BY PART_ID, ME_EC, PRODUCT_ID, FLOW

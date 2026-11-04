@@ -1,4 +1,4 @@
--- Product_Volumes: planned finished units per product x flow. Year columns come from the DEMAND template, month columns from the MONTHS template.
+-- Product_Volumes: planned finished units per product x flow. Year and month columns come from the SERIES template.
 -- PM has one row per product, flow and month: Y is its year, U its units, M its month ('YYYY-MM') and Q its units rounded to 2 decimals.
 -- Year cells are rounded after summing. M and Q are unqualified to keep the 144 month lines short (PRODUCT_CATALOG has no such columns).
 WITH PM AS (
@@ -25,8 +25,7 @@ SELECT
   MAX(PM.CUSTOMER_NAME) AS CUSTOMER,
   MAX(PM.EMS_NAME) AS EMS,
   PM.FLOW AS FLOW
-  {{DEMAND: ,SUM(IFF(PM.Y=#YEAR#,PM.U,0))::NUMBER(38,2) AS UNITS_#YEAR#}}
-  {{MONTHS: ,SUM(IFF(M='#YEAR#-#MM#',Q,0)) AS M_#YEAR#_#MM#}}
+  {{SERIES: ,SUM(IFF(PM.Y=#YEAR#,PM.U,0))::NUMBER(38,2) AS UNITS_#YEAR# || ,SUM(IFF(M='#YEAR#-#MM#',Q,0)) AS M_#YEAR#_#MM#}}
 FROM PM
 LEFT JOIN MECL_PLATFORM.ANALYTICS.PRODUCT_CATALOG C ON C.PRODUCT_ID = PM.PRODUCT_ID
 GROUP BY PM.PRODUCT_ID, PM.FLOW

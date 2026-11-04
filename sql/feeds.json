@@ -454,8 +454,7 @@
       },
       "demandMonths": {
         "sqlPrefix": "M_",
-        "firstYear": 2025,
-        "yearsAhead": 10
+        "yearsAhead": 1
       }
     },
     {
@@ -495,10 +494,14 @@
           "type": "string"
         }
       ],
-      "demandMonths": {
-        "sqlPrefix": "M_",
+      "demandYears": {
+        "sqlPrefix": "DEMAND_",
         "firstYear": 2025,
         "yearsAhead": 10
+      },
+      "demandMonths": {
+        "sqlPrefix": "M_",
+        "yearsAhead": 1
       }
     },
     {
@@ -548,10 +551,14 @@
           "type": "number"
         }
       ],
-      "demandMonths": {
-        "sqlPrefix": "M_",
+      "demandYears": {
+        "sqlPrefix": "DEMAND_",
         "firstYear": 2025,
         "yearsAhead": 10
+      },
+      "demandMonths": {
+        "sqlPrefix": "M_",
+        "yearsAhead": 1
       }
     },
     {

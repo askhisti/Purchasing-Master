@@ -5,6 +5,7 @@
 const PLACEHOLDER = '{{BASE_YEAR}}';
 const DEMAND_TEMPLATE = /\{\{DEMAND:([^}]*)\}\}/g;
 const MONTHS_TEMPLATE = /\{\{MONTHS:([^}]*)\}\}/g;
+const SERIES_TEMPLATE = /\{\{SERIES:([^}]*)\}\}/g;
 const MIN_LIMIT = 100;
 const MAX_LIMIT = 20000;
 
@@ -17,10 +18,27 @@ function quoteLiteral(value) {
 // Replace {{BASE_YEAR}} with the integer year, and expand each {{DEMAND: <template>}} into one
 // line per demand year with #YEAR# replaced (templates start with a comma, so lines join cleanly).
 // {{MONTHS: <template>}} works the same per demand month with #YEAR#, #MONTH# (1-12) and #MM# (01-12).
+// {{SERIES: <year template> || <month template>}} expands both in sheet order: per demand year,
+// the window months of that year, then the year line (so the SELECT order equals the manifest order).
 // Any other placeholder is an error.
 export function renderFeedSql(sqlText, baseYear, demandYears = [], demandMonths = []) {
   if (!Number.isInteger(baseYear)) throw new Error(`baseYear must be an integer, got ${baseYear}`);
-  const withDemand = sqlText.replace(DEMAND_TEMPLATE, (_, template) => {
+  const sub = (t, y, month) => t.trim().split('#YEAR#').join(String(y))
+    .split('#MONTH#').join(String(month)).split('#MM#').join(String(month).padStart(2, '0'));
+  const withSeries = sqlText.replace(SERIES_TEMPLATE, (_, body) => {
+    const parts = body.split('||');
+    if (parts.length !== 2) throw new Error(`SERIES needs "<year template> || <month template>": ${body.trim()}`);
+    const [yt, mt] = parts;
+    if (!yt.includes('#YEAR#') || !mt.includes('#YEAR#')) throw new Error(`SERIES templates need #YEAR#: ${body.trim()}`);
+    if (!demandYears.length) throw new Error('SERIES template but no demand years');
+    const lines = [];
+    for (const y of demandYears) {
+      for (const m of demandMonths.filter((x) => x.year === y)) lines.push(sub(mt, y, m.month));
+      lines.push(sub(yt, y, 1));
+    }
+    return lines.join('\n');
+  });
+  const withDemand = withSeries.replace(DEMAND_TEMPLATE, (_, template) => {
     if (!template.includes('#YEAR#')) throw new Error(`DEMAND template without #YEAR#: ${template.trim()}`);
     if (!demandYears.length) throw new Error('DEMAND template but no demand years');
     return demandYears.map((y) => template.trim().split('#YEAR#').join(String(y))).join('\n');
