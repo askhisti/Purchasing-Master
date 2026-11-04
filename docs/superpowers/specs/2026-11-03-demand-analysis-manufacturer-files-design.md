@@ -1,6 +1,6 @@
 # Purchasing Master — Monthly demand, analysis tabs, manufacturer files
 
-Date: 2026-11-03 · Owner: a.khisti (Purchasing) · Status: **approved** (2026-11-03) · Extends `2026-10-30-purchasing-master-design.md` (the base design; its contract rules, transport and refresh flow apply unchanged unless this document says otherwise).
+Date: 2026-11-03 · Owner: a.khisti (Purchasing) · Status: **approved** (2026-11-03), **amended 2026-11-04 (§11 overrides §2, §5, §6 where they differ)** · Extends `2026-10-30-purchasing-master-design.md` (the base design; its contract rules, transport and refresh flow apply unchanged unless this document says otherwise).
 
 ## 1. Intent
 
@@ -105,3 +105,20 @@ Tab names and column order as in §5; `Quote_Health` status rule and 90-day wind
 ## 9. Left to the builder
 
 SQL text and page sizes, feed keys (ROW_KEY), how BOM coverage is shown in notes, staging slice sizing, dialog markup, sheet formatting and protection mechanics, grouping/sorting details, tests.
+
+## 11. Amendment 2026-11-04 (decided by the user after seeing the first 15-tab fill)
+
+This section overrides §2, §5 and §6 where they differ.
+
+**Tabs (8 plus `_Refresh_Log`), in this order:** `Components`, `Multisource`, `Multisource_Members`, `Component_Usage`, `Products`, `MECL_Price`, `Product_Volumes`, `BOM_Coverage`.
+
+**Removed:** `Component_Demand_Monthly` (duplicates Components), `BOM_Demand_Monthly` (= Product_Volumes × Qty Per Unit; Snowflake's identity `DEMAND_QUANTITY = QTY_PER_UNIT × PLANNED_PRODUCT_UNITS` holds on every row), `BOM_Sources` (alternatives are visible in `Multisource_Members`; the manufacturer file derives sources itself), `Price_At_Demand`, `Savings_Levers`, `Quote_Health`, `Multisource_Health`. Tabs that are no longer fed are deleted from MasterData by the script.
+
+**Rolling demand layout** (user's words: "2025 will be only yearly, 2026 and 2027 will be monthly and yearly and 2028 onwards it should be again yearly"):
+- Monthly columns exist only for the current year Y and the next year Y+1.
+- Order: each year's months come directly before that year's total. Example for Y = 2026: `… | Demand 2025 | 2026-01 … 2026-12 | Demand 2026 | 2027-01 … 2027-12 | Demand 2027 | Demand 2028 | … | Demand 2036`.
+- `Components` gets this layout (yearly from `KPI_COMPONENT_DEMAND_BY_YEAR` as today, months from `COMPONENT_DEMAND_FORECAST`, sourced, primary). `Product_Volumes` gets the same layout with `Units <year>`.
+- It is a rolling window: each January the past year's 12 month columns disappear and next year's 12 appear. This replaces the "columns are only ever appended" rule for month columns only; yearly columns keep it. Consumers read columns by header name.
+- `Component_Usage` stays yearly per product.
+
+**Manufacturer file (§6) data sources:** lines = `Component_Usage` (one per ME_EC × Product ID, with Product, EMS, Qty Per Unit, yearly demand); alternatives = usable members of every `Multisource_Members` cluster that contains the line's primary, primary excluded, deduped by lowest Member Priority (ties: lowest ME_MS), positions 2, 3 … by Member Priority then ME_EC; monthly volume of a line = Σ over Series and Sample rows of `Product_Volumes` (same Product ID) of month units × Qty Per Unit; yearly volume = `Component_Usage` `Demand <year>`; categories, MPN, Manufacturer, Description from `Components` (HW Category / HW Subcategory come from MECL's `COMPONENT_CATALOG`). Everything else in §6 is unchanged (sheets, warnings, monthly only for Y and Y+1, protections).
