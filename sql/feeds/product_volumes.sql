@@ -1,6 +1,6 @@
 -- Product_Volumes: planned finished units per product x flow. Year and month columns come from the SERIES template.
 -- PM has one row per product, flow and month: Y is its year, U its units, M its month ('YYYY-MM') and Q its units rounded to 2 decimals.
--- Year cells are rounded after summing. M and Q are unqualified to keep the 144 month lines short (PRODUCT_CATALOG has no such columns).
+-- Year cells are rounded after summing. M and Q are unqualified to keep the 24 month lines (current and next year) short (PRODUCT_CATALOG has no such columns).
 WITH PM AS (
   SELECT
     PRODUCT_ID,

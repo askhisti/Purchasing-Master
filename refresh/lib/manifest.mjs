@@ -50,8 +50,12 @@ function seriesFor(f, baseYear) {
   if (f.demandMonths && !f.demandYears) throw new Error(`${f.feed}: demandMonths requires demandYears`);
   const months = demandMonthsFor(f, baseYear);
   const prefix = f.demandYears?.headerPrefix ?? 'Demand ';
+  const years = demandYearsFor(f, baseYear);
+  for (const m of months) {
+    if (!years.includes(m.year)) throw new Error(`${f.feed}: month window year ${m.year} is not a demand year`);
+  }
   const out = [];
-  for (const y of demandYearsFor(f, baseYear)) {
+  for (const y of years) {
     for (const m of months.filter((x) => x.year === y)) {
       out.push({ header: `${y}-${pad2(m.month)}`, sql: `${f.demandMonths.sqlPrefix}${y}_${pad2(m.month)}` });
     }

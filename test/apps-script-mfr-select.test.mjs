@@ -149,3 +149,60 @@ test('draft members are not alternatives', () => {
   assert.strictEqual(r.rows.length, 0);
   assert.ok(!r.parts.map((p) => p.meEc).includes('C5'));
 });
+
+test('a product with only a Series row: months are Series units times qty', () => {
+  const c = load(); const f = fixture(c);
+  f.usage.rows.push(['C1', 'M1', 'Murata', 'P2', 999, 'J', 'G', 'K', 'E1', 3].concat(Array(11).fill(0)));
+  const r = c.mfrBuildRows_(f, [{ category: 'MLCC', subcategory: '0402' }], true, 2026);
+  const h = r.headers;
+  const p2 = r.rows.filter((x) => x[h.indexOf('Product')] === 'P2');
+  assert.strictEqual(p2.length, 3);
+  assert.strictEqual(p2[0][h.indexOf('2026-03')], 21);
+});
+
+test('a missing month column throws', () => {
+  const c = load(); const f = fixture(c);
+  const i = f.productVolumes.headers.indexOf('2027-12');
+  const rows = [f.productVolumes.headers, ...f.productVolumes.rows].map((r) => r.filter((_, k) => k !== i));
+  f.productVolumes = c.mfrTable_(rows);
+  assert.throws(() => c.mfrBuildRows_(f, [{ category: 'MLCC', subcategory: '0402' }], true, 2026),
+    /MasterData has no column 2027-12 in Product_Volumes; run the refresh first\./);
+});
+
+test('a missing demand column throws', () => {
+  const c = load(); const f = fixture(c);
+  const i = f.usage.headers.indexOf('Demand 2036');
+  f.usage = c.mfrTable_([f.usage.headers, ...f.usage.rows].map((r) => r.filter((_, k) => k !== i)));
+  assert.throws(() => c.mfrBuildRows_(f, [{ category: 'MLCC', subcategory: '0402' }], true, 2026),
+    /MasterData has no column Demand 2036 in Component_Usage; run the refresh first\./);
+});
+
+test('month and yearly cells are rounded to 2 decimals', () => {
+  const c = load(); const f = fixture(c);
+  f.productVolumes.rows[0][f.productVolumes.col('2026-03')] = 10.004;
+  f.usage.rows[0][f.usage.col('Demand 2026')] = 12.3456;
+  const r = c.mfrBuildRows_(f, [{ category: 'MLCC', subcategory: '0402' }], true, 2026);
+  const h = r.headers;
+  assert.strictEqual(r.rows[0][h.indexOf('2026-03')], 30.01);
+  assert.strictEqual(r.rows[0][h.indexOf('Volume 2026')], 12.35);
+});
+
+test('a blank Member Priority sorts last', () => {
+  const c = load(); const f = fixture(c);
+  f.members.rows.find((r) => r[1] === 'C2')[4] = '';
+  const r = c.mfrBuildRows_(f, [{ category: 'MLCC', subcategory: '0402' }], true, 2026);
+  const h = r.headers;
+  const p1 = r.rows.filter((x) => x[h.indexOf('Product')] === 'P1');
+  assert.deepStrictEqual(plain(p1.map((x) => x[h.indexOf('ME_EC')])), ['C1', 'C4', 'C2']);
+});
+
+test('an alternative missing from Components takes manufacturer and MPN from its member row', () => {
+  const c = load(); const f = fixture(c);
+  f.components.rows = f.components.rows.filter((r) => r[0] !== 'C2');
+  const r = c.mfrBuildRows_(f, [{ category: 'MLCC', subcategory: '0402' }], true, 2026);
+  const h = r.headers;
+  const row = r.rows.find((x) => x[h.indexOf('ME_EC')] === 'C2');
+  assert.strictEqual(row[h.indexOf('Manufacturer')], 'TDK');
+  assert.strictEqual(row[h.indexOf('MPN')], 'M2');
+  assert.strictEqual(row[h.indexOf('Description')], '(none)');
+});

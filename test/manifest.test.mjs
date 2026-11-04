@@ -266,3 +266,9 @@ test('demandMonths without demandYears throws', () => {
   assert.throws(() => headersFor(bad, 2026), /demandYears/);
   assert.throws(() => sqlColumnsFor(bad, 2026), /demandYears/);
 });
+
+test('a month window beyond the demand years throws', () => {
+  const bad = { ...rolling, demandMonths: { sqlPrefix: 'M_', yearsAhead: 11 } };
+  assert.throws(() => headersFor(bad, 2026), /not a demand year/);
+  assert.throws(() => sqlColumnsFor(bad, 2026), /not a demand year/);
+});

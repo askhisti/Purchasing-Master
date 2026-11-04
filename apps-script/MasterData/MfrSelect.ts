@@ -34,6 +34,10 @@ function mfrNum_(v) {
   return isNaN(n) ? 0 : n;
 }
 
+function mfrRound_(v) {
+  return Math.round(mfrNum_(v) * 100) / 100;
+}
+
 function mfrTrue_(v) {
   return v === true || String(v).trim().toUpperCase() === 'TRUE';
 }
@@ -43,6 +47,7 @@ function mfrTrue_(v) {
 function mfrAlternatives_(members) {
   var iMs = members.col('ME_MS'), iEc = members.col('ME_EC');
   var iUse = members.col('Is Usable'), iPrio = members.col('Member Priority');
+  var iMfr = members.col('Manufacturer'), iMpn = members.col('MPN');
   var clusters = {}, clustersOf = {};
   members.rows.forEach(function (r) {
     var ms = String(r[iMs]), ec = String(r[iEc]);
@@ -59,13 +64,14 @@ function mfrAlternatives_(members) {
       clusters[ms].forEach(function (r) {
         var ec = String(r[iEc]);
         if (ec === primary || !mfrTrue_(r[iUse])) return;
-        var prio = mfrNum_(r[iPrio]);
+        // A blank priority sorts last.
+        var prio = String(r[iPrio]).trim() === '' ? Infinity : mfrNum_(r[iPrio]);
         var b = best[ec];
-        if (!b || prio < b.prio || (prio === b.prio && ms < b.ms)) best[ec] = { ec: ec, ms: ms, prio: prio };
+        if (!b || prio < b.prio || (prio === b.prio && ms < b.ms)) best[ec] = { ec: ec, ms: ms, prio: prio, mfr: r[iMfr], mpn: r[iMpn] };
       });
     });
     var list = Object.keys(best).map(function (k) { return best[k]; }).sort(function (a, b) {
-      return (a.prio - b.prio) || mfrCmp_(a.ec, b.ec);
+      return (a.prio === b.prio ? 0 : a.prio < b.prio ? -1 : 1) || mfrCmp_(a.ec, b.ec);
     });
     return (cache[primary] = list);
   };
@@ -128,11 +134,16 @@ function mfrBuildRows_(input, selection, onlyUsed, baseYear) {
   var headers = ['Category', 'Subcategory', 'Product', 'EMS', 'BOM ME_EC', 'Source Position',
     'ME_EC', 'Manufacturer', 'MPN', 'Description', 'ME_MS', 'Volume Type']
     .concat(yearHeaders, monthHeaders);
+  // A window column that is absent means the sheet was not refreshed for this base year: fail, do not write zeros.
   var yearIdx = yearHeaders.map(function (h) {
     var n = 'Demand ' + h.slice(7);
-    return usage.has(n) ? usage.col(n) : -1;
+    if (!usage.has(n)) throw new Error('MasterData has no column ' + n + ' in Component_Usage; run the refresh first.');
+    return usage.col(n);
   });
-  var monthIdx = monthHeaders.map(function (h) { return pvol.has(h) ? pvol.col(h) : -1; });
+  var monthIdx = monthHeaders.map(function (h) {
+    if (!pvol.has(h)) throw new Error('MasterData has no column ' + h + ' in Product_Volumes; run the refresh first.');
+    return pvol.col(h);
+  });
 
   var compByEc = {};
   comps.rows.forEach(function (r) { var k = String(r[cEc]); if (!(k in compByEc)) compByEc[k] = r; });
@@ -150,7 +161,7 @@ function mfrBuildRows_(input, selection, onlyUsed, baseYear) {
   pvol.rows.forEach(function (r) {
     var k = String(r[pPid]);
     var acc = unitsByPid[k] || (unitsByPid[k] = monthHeaders.map(function () { return 0; }));
-    monthIdx.forEach(function (ix, i) { if (ix >= 0) acc[i] += mfrNum_(r[ix]); });
+    monthIdx.forEach(function (ix, i) { acc[i] += mfrNum_(r[ix]); });
   });
 
   var alts = mfrAlternatives_(input.members);
@@ -159,9 +170,9 @@ function mfrBuildRows_(input, selection, onlyUsed, baseYear) {
   usage.rows.forEach(function (ur) {
     var primaryEc = String(ur[uEc]);
     if (primaryEc === '') return;
-    var sources = [{ ec: primaryEc, ms: '', pos: 1, type: 'Demand' }];
+    var sources = [{ ec: primaryEc, ms: '', mfr: '', mpn: '', pos: 1, type: 'Demand' }];
     alts(primaryEc).forEach(function (a, i) {
-      sources.push({ ec: a.ec, ms: a.ms, pos: i + 2, type: 'Potential volume if sourced' });
+      sources.push({ ec: a.ec, ms: a.ms, mfr: a.mfr, mpn: a.mpn, pos: i + 2, type: 'Potential volume if sourced' });
     });
     var hit = sources.some(function (s) {
       var c = catOf(s.ec);
@@ -175,9 +186,9 @@ function mfrBuildRows_(input, selection, onlyUsed, baseYear) {
       var cr = compByEc[s.ec];
       var c = catOf(s.ec);
       var line = [c[0], c[1], ur[uProd], ur[uEms], primaryEc, s.pos, s.ec,
-        cr ? cr[cMfr] : '', cr ? cr[cMpn] : '', cr ? cr[cDesc] : '', s.ms, s.type];
-      yearIdx.forEach(function (ix) { line.push(ix >= 0 && ur[ix] !== undefined ? ur[ix] : ''); });
-      monthHeaders.forEach(function (_, i) { line.push(units ? units[i] * qty : 0); });
+        cr ? cr[cMfr] : s.mfr, cr ? cr[cMpn] : s.mpn, cr ? cr[cDesc] : '(none)', s.ms, s.type];
+      yearIdx.forEach(function (ix) { line.push(ur[ix] !== undefined && ur[ix] !== '' ? mfrRound_(ur[ix]) : ''); });
+      monthHeaders.forEach(function (_, i) { line.push(units ? mfrRound_(units[i] * qty) : 0); });
       out.push({ sort: [primary[0], primary[1], primaryEc, String(ur[uProd]), String(ur[uPid]), s.pos], row: line });
     });
   });
